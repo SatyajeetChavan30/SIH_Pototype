@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hand-written WITSML 1.4.1 drillReport in the same structure as the public Volve DDR XML.
+     SYNTHETIC content for tests; not a real operator record. -->
+<drillReports xmlns="http://www.witsml.org/schemas/1series" version="1.4.1.1">
+  <drillReport uidWell="W-TEST" uidWellbore="WB-TEST" uid="DR-1">
+    <nameWell>XYZ-01</nameWell>
+    <nameWellbore>XYZ-01</nameWellbore>
+    <dTimStart>2019-03-11T00:00:00+05:30</dTimStart>
+    <dTimEnd>2019-03-12T00:00:00+05:30</dTimEnd>
+    <statusInfo>
+      <md uom="m">2210</md>
+      <sum24Hr>Drilled 12 1/4" section to 2210 m. Partial losses encountered and cured.</sum24Hr>
+    </statusInfo>
+    <fluid>
+      <type>KCl-PHPA</type>
+      <density uom="g/cm3">1.21</density>
+    </fluid>
+    <activity>
+      <dTimStart>2019-03-11T00:00:00+05:30</dTimStart>
+      <dTimEnd>2019-03-11T06:00:00+05:30</dTimEnd>
+      <md uom="m">2150</md>
+      <proprietaryCode>drilling -- drill</proprietaryCode>
+      <state>ok</state>
+      <comments>Drilled 12 1/4" hole from 2080 m to 2150 m. No losses observed</comments>
+    </activity>
+    <activity>
+      <dTimStart>2019-03-11T06:00:00+05:30</dTimStart>
+      <dTimEnd>2019-03-11T10:30:00+05:30</dTimEnd>
+      <md uom="m">2172</md>
+      <proprietaryCode>interruption -- lost circulation</proprietaryCode>
+      <state>fail</state>
+      <comments>Observed partial losses of 40 bbl/hr at 2172 m in Tipam sand. Pumped 40 bbl sized CaCO3 LCM pill. Losses cured</comments>
+    </activity>
+    <activity>
+      <dTimStart>2019-03-11T10:30:00+05:30</dTimStart>
+      <dTimEnd>2019-03-11T24:00:00+05:30</dTimEnd>
+      <md uom="m">2210</md>
+      <proprietaryCode>drilling -- drill</proprietaryCode>
+      <state>ok</state>
+      <comments>Drilled ahead to 2210 m. Flow check negative</comments>
+    </activity>
+  </drillReport>
+</drillReports>
