@@ -6,6 +6,7 @@ import datetime as dt
 import json
 import shutil
 import threading
+from contextlib import asynccontextmanager
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -105,16 +106,19 @@ class State:
 
 
 S = State()
-app = FastAPI(title="eRTMAC-NWIS", version="0.1.0",
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    S.load()
+    if S.ready:  # warm the search + analog indexes in the background
+        threading.Thread(target=lambda: (S.index, S.analogs), daemon=True).start()
+    yield
+
+
+app = FastAPI(title="eRTMAC-NWIS", version="0.1.0", lifespan=lifespan,
               description="Nearby Wells Intelligence System - offset-well knowledge & decision support (SIH PS 26121)")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-
-
-@app.on_event("startup")
-def _startup():
-    S.load()
-    if S.ready:
-        threading.Thread(target=lambda: (S.index, S.analogs), daemon=True).start()
 
 
 def kb() -> KnowledgeBase:

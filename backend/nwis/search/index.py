@@ -220,7 +220,7 @@ class SearchIndex:
         elif d.type == "lesson":
             l = d.meta["lesson"]
             out["citation"] = {"doc_id": l["doc_id"], "page_no": l["page_no"], "start": l["start"], "end": l["end"],
-                               "title": l.get("doc_title")}
+                               "title": l.get("doc_title"), "text": l["text"]}
         else:
             out["citation"] = d.meta
         return out

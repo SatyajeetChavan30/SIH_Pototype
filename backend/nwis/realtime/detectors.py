@@ -132,13 +132,15 @@ class DetectorBank:
                               [{"channel": "flow_out", "value": round(s['flow_out'], 1), "baseline": round(fb, 1), "unit": "%"},
                                {"channel": "pit_rate", "value": round(pit_rate, 1), "baseline": 0, "unit": "bbl/hr"},
                                {"channel": "gas", "value": round(s['gas'], 2), "baseline": round(gas_b, 2), "unit": "%"}]))
+        recent_out = [h["flow_out"] for h in list(self.hist)[-5:]] + [s["flow_out"]]
+        delta_s = float(np.mean(recent_out)) - fb if len(self.flow_base) >= 20 else 0.0
         if self.loss_persist >= 3 and pit_rate < -8:
             rate = -pit_rate
             sev = "seepage" if rate < 10 else ("partial" if rate < 100 else "severe")
             lvl = "critical" if rate >= 40 else "warning"
             out.append(Signal("LOSS", "flow-pit", lvl, round(_sig((rate - 10) / 8), 3),
                               "Lost circulation detected",
-                              f"Flow-out {delta:.1f}% below baseline and active pit dropping ~{rate:.0f} bbl/hr ({sev}).", md,
+                              f"Flow-out {delta_s:+.1f}% vs baseline and active pit dropping ~{rate:.0f} bbl/hr ({sev}).", md,
                               [{"channel": "flow_out", "value": round(s['flow_out'], 1), "baseline": round(fb, 1), "unit": "%"},
                                {"channel": "pit_rate", "value": round(pit_rate, 1), "baseline": 0, "unit": "bbl/hr"},
                                {"channel": "ecd", "value": round(s['ecd'], 2), "baseline": None, "unit": "ppg"}],

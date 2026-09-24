@@ -126,6 +126,8 @@ def get_segmenter() -> WordSegmenter:
 def repair_ocr_spacing(text: str) -> str:
     """Insert missing spaces in OCR output: split long letter runs, separate numbers from words."""
     seg = get_segmenter()
+    text = re.sub(r"(?<=[a-z])1(?=[a-z])|(?<![\w,.])1(?=[a-z]{3,})", "l", text)   # 'I/l' read as '1' inside words
+    text = re.sub(r"(?<=[a-z])0(?=[a-z])", "o", text)
     text = re.sub(r"(?<=[A-Za-z])\.(?=[A-Z][a-z])", ". ", text)
     text = re.sub(r"(?<=\d)[lI|](?=\d|m\b|m[A-Za-z]|mMD)", "1", text)
     text = re.sub(r"(?<=[A-Za-z]{2})(?=\d)", " ", text)

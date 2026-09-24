@@ -1,1 +1,101 @@
-# SIH_Pototype
+# eRTMAC-NWIS: Nearby Wells Intelligence System
+
+**SIH 2026 · PS 26121 · Oil India Limited.** An AI-powered offset-well knowledge and decision-support platform that runs alongside eRTMAC.
+
+NWIS turns decades of DDRs, WCRs and scanned reports into **cited, structured drilling knowledge**. It then uses that knowledge to warn the rig **before** the bit reaches a problem interval, by projecting offset-well events onto the active well **by formation, not measured depth**.
+
+> ⚠️ **All data in this repository's demo is SYNTHETIC.** It is generated from published Upper-Assam geology (Girujan clay, depleted Tipam sands, Barail coal and thrust-proximal overpressure, fractured Sylhet limestone). Well names are fictitious.
+
+![Live Ops](docs/screenshots/01_live_ops.png)
+
+## Why it's different
+
+| | Typical offset tools | **NWIS** |
+|---|---|---|
+| Offset comparison | by MD / TVD | **by formation**: tops interpolated with ±σ and re-anchored live as tops are picked |
+| Risk | score, no uncertainty | **probability, 90% credible interval and evidence count** (Beta-Binomial) plus an ML model; beats "look at the nearest well" (AUC 0.89 vs 0.59) |
+| Mud weight | fixed program | **offset-derived, depletion-aware MW/ECD window**: P(loss\|ECD), P(kick\|MW) |
+| Alerts | "something is wrong" | **fused and corroborated**: the source page, what worked last time (cure rates) and analog situations |
+| Legacy knowledge | digital data only | **NLP + OCR** over DDR/WCR PDFs and scans, with negation, units, citations and a review queue |
+| Deployment | cloud SaaS / licences | **on-prem, air-gapped, open source**; WITS-0 and WITSML adapters for eRTMAC |
+
+Full rationale: [`docs/RESEARCH.md`](docs/RESEARCH.md) (market and literature) · [`docs/SOLUTION.md`](docs/SOLUTION.md) (design, metrics, demo script, roadmap).
+
+## Quick start
+
+Requirements: Python 3.10+ and Node 18+.
+
+```bash
+./run.sh            # installs deps, builds the synthetic knowledge base (~2.5 min), builds the UI, serves it
+# open http://localhost:8000
+```
+
+Other modes:
+```bash
+./run.sh --rebuild  # regenerate all demo data
+./run.sh --dev      # backend :8000 + Vite hot-reload :5173
+```
+
+Manual steps:
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e "backend[dev,ocr]"          # the [ocr] extra (RapidOCR) is optional; without it scans are flagged "needs OCR"
+cd backend && python -m nwis.cli build-demo && python -m nwis.cli serve
+cd frontend && npm install && npm run build   # the server then serves frontend/dist
+```
+
+Import real WITSML drillReport XML (e.g. the public Equinor Volve DDRs):
+```bash
+cd backend && python -m nwis.cli import-volve /path/to/volve/Well_technical_data/Daily_Drilling_Report_XML
+```
+
+Optional on-prem LLM phrasing, off by default. It is citation-guarded, and answers stay grounded without it:
+```bash
+NWIS_LLM=ollama OLLAMA_MODEL=llama3.1:8b python -m nwis.cli serve
+```
+
+## The seven views
+
+| View | What to show |
+|---|---|
+| **Live Ops** | Replay of the active well NDH-21's eRTMAC stream. "Jump to" S1–S4 scenarios. Fused alert feed, look-ahead ribbon, evidence drawer with citations, rig-site view. |
+| **Offset Map** | Wells within a user-defined radius, coloured by dominant hazard. Click anywhere to assess a planned location. |
+| **Correlation** | Offset logs side by side; flatten on a formation top and the Tipam thief sand lines up. |
+| **Risk & Planning** | Depth × hazard risk with CIs, headline zones, MW window vs plan, printable Offset Hazard Brief. |
+| **Knowledge** | Search with auto-parsed filters, "Ask NWIS" with numbered citations, knowledge graph (what cured what). |
+| **Ingestion** | Upload PDF/XML or use a sample. Sentence-level NLP trace, extracted events, human review queue. |
+| **Analytics** | Model skill vs baselines, extraction F1, NPT Pareto, calibration, what-if value. |
+
+<details><summary>More screenshots</summary>
+
+| | |
+|---|---|
+| ![](docs/screenshots/02_alert_evidence.png) | ![](docs/screenshots/03_citation.png) |
+| ![](docs/screenshots/06_risk_planning.png) | ![](docs/screenshots/07_correlation.png) |
+| ![](docs/screenshots/08_knowledge_search.png) | ![](docs/screenshots/11_ingestion.png) |
+| ![](docs/screenshots/10_graph.png) | ![](docs/screenshots/12_analytics.png) |
+</details>
+
+## Repository layout
+
+```
+backend/nwis/
+  domain/ontology.py      formations, hazards, mitigations, negation/hypothetical lexicons
+  data/                   synthetic Upper-Assam world, DDR/WCR PDF renderer, drilling logs + active-well stream
+  ingest/                 PDF/OCR, NLP extraction, pipeline + review queue, WITSML + WITS-0, evaluation
+  correlation.py          IDW tops, formation-relative projection, correlation panel
+  risk/                   Beta-Binomial ribbon + zones, HistGB model (leave-wells-out), MW window, recommendations
+  search/                 query parser, BM25 + LSA + RRF index, Ask NWIS
+  realtime/               detectors, alert fusion, analog replay, live session engine
+  kg.py report.py llm.py  knowledge graph, Offset Hazard Brief, optional Ollama with citation guard
+  api/main.py             FastAPI REST + /ws/live WebSocket, serves the UI
+backend/tests/            21 tests (NLP, geometry, parsers, model claims, live replay, API)
+frontend/src/             React + TypeScript views and components
+docs/                     RESEARCH.md, SOLUTION.md, screenshots
+```
+
+## Tests
+
+```bash
+cd backend && pytest -q    # unit tests always run; system tests run once build-demo has been done
+```

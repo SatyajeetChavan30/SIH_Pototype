@@ -86,7 +86,7 @@ def parse_query(q: str) -> ParsedQuery:
     for m in re.finditer(r"\b([A-Z]{3}-\d{2})\b", q.upper()):
         pq.wells.append(m.group(1))
         take(m)
-    m = re.search(r"(?:near|around|offsets? of|close to)\s+([A-Z]{3}-\d{2})", q.upper())
+    m = re.search(r"(?:near|around|offsets? of|close to)\s+([A-Z]{3}-\d{2})", q.upper(), re.I)
     if m:
         pq.near_well = m.group(1)
         pq.wells = [w for w in pq.wells if w != pq.near_well]
