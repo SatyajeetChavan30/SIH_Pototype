@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useApp } from "../context";
 import MemoCard from "../components/MemoCard";
+import UploadDrop, { uploadReport } from "../components/UploadDrop";
 import { HAZARD_COLOR, HAZARD_SHORT, fmt } from "../theme";
 
 const ROLE_COLOR: Record<string, string> = {
@@ -15,27 +16,34 @@ const ROLE_HELP: Record<string, string> = {
 };
 
 export default function Ingestion() {
-  const { openCitation, fmName, meta } = useApp();
-  const [res, setRes] = useState<any>(null);
+  const { openCitation, fmName, meta, lastIngest, setLastIngest } = useApp();
+  const [res, setRes] = useState<any>(lastIngest);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [review, setReview] = useState<any[]>([]);
   const [docs, setDocs] = useState<any[]>([]);
+  const [skipped, setSkipped] = useState<any[]>([]);
+  const [reread, setReread] = useState<any[] | null>(null);
+  const [reviewStatus, setReviewStatus] = useState<"open" | "approved" | "rejected">("open");
 
   const loadSide = () => {
-    api("/api/review").then(setReview);
+    api(`/api/review?status=${reviewStatus}`).then(setReview);
     api("/api/documents").then(setDocs);
+    api("/api/ingest/skipped-scans").then((r) => setSkipped(r.documents)).catch(() => setSkipped([]));
   };
-  useEffect(loadSide, []);
+  useEffect(loadSide, [reviewStatus]);
+  useEffect(() => { if (lastIngest) setLastIngest(null); }, []);   // shown once, then forgotten
 
   const run = async (p: Promise<any>, label: string) => {
     setBusy(label); setErr(null);
     try { setRes(await p); loadSide(); } catch (e: any) { setErr(e.message); } finally { setBusy(null); }
   };
   const sample = (kind: string, label: string) => run(api(`/api/ingest/sample?kind=${kind}`, { method: "POST" }), label);
-  const upload = (f: File) => {
-    const fd = new FormData(); fd.append("file", f);
-    run(api("/api/ingest", { method: "POST", body: fd }), f.name);
+  const upload = (f: File) => run(uploadReport(f), f.name);
+  const rereadScans = async () => {
+    setBusy(`${skipped.length} scanned document${skipped.length === 1 ? "" : "s"}`); setErr(null);
+    try { setReread((await api("/api/ingest/reread-scans", { method: "POST" })).documents); loadSide(); }
+    catch (e: any) { setErr(e.message); } finally { setBusy(null); }
   };
   const act = async (id: string, action: string) => {
     await api(`/api/review/${id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) });
@@ -51,26 +59,37 @@ export default function Ingestion() {
       <div className="col">
       <div className="card col">
         <h3>Ingest a document</h3>
-        <label className="card gridbg" style={{ textAlign: "center", padding: 26, cursor: "pointer", borderStyle: "dashed" }}
-          onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) upload(f); }}>
-          <input type="file" accept=".pdf,.xml" style={{ display: "none" }} onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} />
-          <div style={{ fontSize: 22 }}>⇪</div>Drop PDF / XML here or click to browse
-        </label>
+        <UploadDrop onFiles={(fs) => upload(fs[0])} disabled={!!busy} />
         <div className="row wrap">
           <span className="small muted">Or try a sample:</span>
           <button className="btn sm" disabled={!!busy} onClick={() => sample("ddr", "today's DDR")}>Today's DDR · {meta.active_well}</button>
           <button className="btn sm" disabled={!!busy} onClick={() => sample("scanned", "scanned WCR")}>Scanned legacy WCR (OCR)</button>
           <button className="btn sm" disabled={!!busy} onClick={() => sample("witsml", "WITSML XML")}>WITSML drillReport XML</button>
         </div>
-        {busy && <div className="small">Processing {busy}… {busy.includes("scan") ? "(OCR takes ~10 s per page)" : ""}</div>}
+        {skipped.length > 0 && <div className="banner">
+          <b>{skipped.length} scanned document{skipped.length === 1 ? " was" : "s were"} stored unread</b> because no OCR engine was installed at the time
+          ({skipped.slice(0, 4).map((d) => d.title).join("; ")}{skipped.length > 4 ? "; …" : ""}).{" "}
+          {meta.ocr.available
+            ? <button className="btn sm" disabled={!!busy} onClick={rereadScans}>Read them now with {meta.ocr.engine}</button>
+            : <span>Install OCR on the server (<code>pip install -e "backend[ocr]"</code>), restart, then read them from here.</span>}
+        </div>}
+        {reread && <div className="small">
+          Re-read {reread.length} scanned document{reread.length === 1 ? "" : "s"}:{" "}
+          {reread.map((r) => r.error ? `${r.title}: ${r.error}` : `${r.well_id ?? r.title}: ${r.events} event${r.events === 1 ? "" : "s"}, ${r.lessons} lesson${r.lessons === 1 ? "" : "s"}${r.review ? `, ${r.review} for review` : ""}`).join(" · ")}
+        </div>}
+        {busy && <div className="small">Processing {busy}… {busy.includes("scan") ? "(OCR takes a few seconds per page)" : ""}</div>}
         {err && <div className="banner">{err}</div>}
       </div>
       <MemoCard onResult={(r) => { setRes(r); loadSide(); }} />
       </div>
       <div className="card">
-        <h3>Human review queue <span className="sub">{review.length} open · approvals become training data (active learning)</span></h3>
+        <h3>Human review queue <span className="sub">{review.length} {reviewStatus} · verdicts become training data (retrain in Analytics › Maintenance)</span></h3>
+        <div className="seg" role="group" aria-label="Review status" style={{ marginBottom: 6 }}>
+          {(["open", "approved", "rejected"] as const).map((st) => <button key={st} className={reviewStatus === st ? "on" : ""} onClick={() => setReviewStatus(st)}>
+            {st[0].toUpperCase() + st.slice(1)}</button>)}
+        </div>
         <div className="scroll" style={{ maxHeight: 560 }}>
-          {review.length === 0 && <div className="empty">Nothing waiting for review.</div>}
+          {review.length === 0 && <div className="empty">{reviewStatus === "open" ? "Nothing waiting for review." : `No ${reviewStatus} items yet.`}</div>}
           {review.map((r) => <div key={r.id} className="row" style={{ borderBottom: "1px solid var(--line)", padding: "6px 0", alignItems: "flex-start" }}>
             {r.kind === "lesson" ? <div style={{ flex: 1 }}>
               <div className="small"><span className="pill" style={{ color: "#9085e9" }}>EXPERT LESSON</span> <b>{r.payload.author ?? "unknown author"}</b>
@@ -82,8 +101,10 @@ export default function Ingestion() {
               <div className="small muted">confidence {fmt.pct(r.confidence)} · {r.reason}</div>
               {r.payload.citations?.[0] && <div className="small cite" onClick={() => openCitation(r.payload.citations[0])}>“{r.payload.citations[0].text.slice(0, 110)}”</div>}
             </div>}
-            <button className="btn sm" onClick={() => act(r.id, "approve")}>✔ Approve</button>
-            <button className="btn sm" onClick={() => act(r.id, "reject")}>✖ Reject</button>
+            {reviewStatus === "open" ? <>
+              <button className="btn sm" onClick={() => act(r.id, "approve")}>✔ Approve</button>
+              <button className="btn sm" onClick={() => act(r.id, "reject")}>✖ Reject</button>
+            </> : <span className="chip" style={{ color: reviewStatus === "approved" ? "var(--good-ink)" : "var(--bad-ink)" }}>{reviewStatus}</span>}
           </div>)}
         </div>
       </div>

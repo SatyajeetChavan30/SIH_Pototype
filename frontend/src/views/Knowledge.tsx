@@ -7,7 +7,7 @@ import { useApp } from "../context";
 import { useTip } from "../components/Tip";
 import BriefModal from "../components/BriefModal";
 import { getActor } from "../live";
-import type { Brief } from "../types";
+import type { Brief, WellEvent } from "../types";
 import { HAZARD_COLOR, HAZARD_SHORT, fmt } from "../theme";
 
 const FALLBACK_EXAMPLES = [
@@ -36,7 +36,7 @@ function Highlighted({ text, hl }: { text: string; hl: number[][] }) {
 export default function Knowledge() {
   const { params } = useApp();
   const { can } = useAuth();
-  const [tab, setTab] = useState<"search" | "ask" | "graph" | "memo">(params.tab as any || "search");
+  const [tab, setTab] = useState<"search" | "ask" | "graph" | "browse" | "memo">(params.tab as any || "search");
   const [memoRes, setMemoRes] = useState<any>(null);
   const memoHere = !can(...OFFICE);   // office users capture memos in Ingestion; field users do it here
   return <div className="col">
@@ -48,17 +48,40 @@ export default function Knowledge() {
       <button className={tab === "search" ? "on" : ""} onClick={() => setTab("search")}>Search</button>
       <button className={tab === "ask" ? "on" : ""} onClick={() => setTab("ask")}>Ask NWIS</button>
       <button className={tab === "graph" ? "on" : ""} onClick={() => setTab("graph")}>Knowledge graph</button>
+      <button className={tab === "browse" ? "on" : ""} onClick={() => setTab("browse")}>Browse all</button>
       {memoHere && <button className={tab === "memo" ? "on" : ""} onClick={() => setTab("memo")}>Share know-how</button>}
     </div>
     {tab === "search" && <Search initial={params.q} />}
     {tab === "ask" && <Ask />}
     {tab === "graph" && <Graph />}
+    {tab === "browse" && <Browse />}
     {tab === "memo" && memoHere && <>
       <MemoCard onResult={setMemoRes} />
       {memoRes && <div className="card small">Thanks. {Array.isArray(memoRes.review) ? memoRes.review.length : 0} item(s) from your memo went to the office review
         queue. Once approved they appear in search, Ask NWIS and live recommendations, credited to you.</div>}
     </>}
   </div>;
+}
+
+const csvCell = (v: unknown) => {
+  const t = v == null ? "" : String(v);
+  return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+};
+
+/** Every matching record (not only the 30 on screen) as a CSV, with its source page, for use outside NWIS. */
+async function exportCsv(q: string, types: string[], total: number, fmName: (c: string) => string) {
+  const r = await api(`/api/search?${qs({ q, types: types.join(","), limit: Math.min(total, 500) })}`);
+  const head = ["type", "well", "formation", "md_m", "hazards", "text", "source", "page"];
+  const rows = r.results.map((x: any) => [x.type, x.well_id, x.formation ? fmName(x.formation) : "", x.md ?? "",
+    x.hazards.map((h: string) => HAZARD_SHORT[h] ?? h).join("; "), x.text, x.citation?.title ?? x.citation?.doc_id ?? "",
+    x.citation?.page_no ?? ""]);
+  const csv = [head, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n");
+  const url = URL.createObjectURL(new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" }));   // BOM: Excel reads UTF-8
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `nwis-knowledge-${q.trim().replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").slice(0, 60) || "search"}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 function Search({ initial }: { initial?: string }) {
@@ -70,9 +93,10 @@ function Search({ initial }: { initial?: string }) {
   const [res, setRes] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const [aar, setAar] = useState<string | null>(null);
+  const [ranQ, setRanQ] = useState(q);   // the query behind the results on screen (the box may have been edited since)
   const run = async (qq = q) => {
     setBusy(true);
-    try { setRes(await api(`/api/search?${qs({ q: qq, types: types.join(","), limit: 30 })}`)); } finally { setBusy(false); }
+    try { setRes(await api(`/api/search?${qs({ q: qq, types: types.join(","), limit: 30 })}`)); setRanQ(qq); } finally { setBusy(false); }
   };
   useEffect(() => { run(); }, [types]);
   return <div className="col">
@@ -89,6 +113,8 @@ function Search({ initial }: { initial?: string }) {
       {res.query.chips.length === 0 && <span className="small muted">free text</span>}
       {res.query.chips.map((c: any, i: number) => <span key={i} className="chip">{c.kind === "hazard" && <span className="swatch" style={{ background: HAZARD_COLOR[c.value] }} />}{c.label}</span>)}
       <span className="small muted">· {res.total} matching records</span>
+      {res.total > 0 && <button className="btn sm ghost" onClick={() => exportCsv(ranQ, types, res.total, fmName)}
+        title="Download every matching record with its source page (up to 500)">⇩ Export CSV</button>}
       <span style={{ marginLeft: "auto" }} className="row small">{["event", "lesson", "passage"].map((t) =>
         <label key={t} className="row" style={{ gap: 4 }}><input type="checkbox" checked={types.includes(t)} onChange={() => setTypes(types.includes(t) ? types.filter((x) => x !== t) : [...types, t])} />{t}s</label>)}</span>
     </div>}
@@ -236,5 +262,57 @@ function Graph() {
     </svg>}
     <div className="row wrap small" style={{ gap: 12 }}><span style={{ color: "var(--good-ink)" }}>━ usually cured (≥55%)</span><span style={{ color: "var(--bad-ink)" }}>━ rarely cured (≤30%)</span><span className="muted">━ mixed</span></div>
     {tip}
+  </div>;
+}
+
+/** Every extracted event and lesson in the knowledge base, filterable; each event opens its source page. */
+function Browse() {
+  const { meta, fmName, openCitation } = useApp();
+  const [kind, setKind] = useState<"events" | "lessons">("events");
+  const [hazard, setHazard] = useState("");
+  const [formation, setFormation] = useState("");
+  const [well, setWell] = useState("");
+  const [rows, setRows] = useState<any[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    setRows(null); setErr(null);
+    api(`/api/${kind}?${qs({ hazard, formation })}`).then(setRows).catch((e) => setErr(e.message));
+  }, [kind, hazard, formation]);
+  const w = well.trim().toUpperCase();
+  const shown = (rows ?? []).filter((r) => !w || String(r.well_id ?? "").toUpperCase().includes(w));
+  const LIMIT = 500;
+  return <div className="card col" style={{ gap: 8 }}>
+    <div className="row wrap" style={{ gap: 8 }}>
+      <div className="seg" role="group" aria-label="What to browse">
+        <button className={kind === "events" ? "on" : ""} onClick={() => setKind("events")}>Events</button>
+        <button className={kind === "lessons" ? "on" : ""} onClick={() => setKind("lessons")}>Lessons</button>
+      </div>
+      <select value={hazard} onChange={(e) => setHazard(e.target.value)} aria-label="Hazard">
+        <option value="">all hazards</option>{meta.ontology.hazards.map((h) => <option key={h.code} value={h.code}>{h.label}</option>)}
+      </select>
+      <select value={formation} onChange={(e) => setFormation(e.target.value)} aria-label="Formation">
+        <option value="">all formations</option>{meta.ontology.formations.map((f) => <option key={f.code} value={f.code}>{f.name}</option>)}
+      </select>
+      <input type="text" placeholder="well (e.g. BDA-06)" value={well} onChange={(e) => setWell(e.target.value)} style={{ width: 150 }} aria-label="Well" />
+      <span className="small muted">{rows ? `${fmt.n0(shown.length)} ${kind}${shown.length > LIMIT ? `, first ${LIMIT} shown` : ""}` : "loading…"}</span>
+    </div>
+    {err && <div className="banner small">{err}</div>}
+    <div className="scroll" style={{ maxHeight: 560 }}>
+      {kind === "events" ? <table className="t"><thead><tr><th>Well</th><th>Hazard</th><th className="num">MD (m)</th><th>Formation</th><th>Severity</th>
+        <th className="num">NPT (h)</th><th className="num">Conf.</th><th>Status</th><th>Summary</th></tr></thead>
+        <tbody>{(shown as WellEvent[]).slice(0, LIMIT).map((e) => <tr key={e.id} className={e.citations?.[0] ? "click" : ""}
+          style={{ cursor: e.citations?.[0] ? "pointer" : undefined }} title={e.citations?.[0] ? "Open the source page" : undefined}
+          onClick={() => e.citations?.[0] && openCitation(e.citations[0])}>
+          <td>{e.well_id}</td><td><span className="swatch" style={{ background: HAZARD_COLOR[e.hazard] }} /> {HAZARD_SHORT[e.hazard] ?? e.hazard}</td>
+          <td className="num">{e.md != null ? fmt.n0(e.md) : "–"}</td><td>{fmName(e.formation)}</td><td>{e.severity ?? ""}</td>
+          <td className="num">{e.npt_hours != null ? e.npt_hours.toFixed(1) : ""}</td><td className="num">{fmt.pct(e.confidence)}</td><td>{e.status}</td>
+          <td className="small" style={{ maxWidth: 360 }}>{e.summary}</td></tr>)}</tbody></table>
+        : <table className="t"><thead><tr><th>Well</th><th>Hazard</th><th>Formation</th><th>Lesson</th><th>Source</th></tr></thead>
+          <tbody>{shown.slice(0, LIMIT).map((l) => <tr key={l.id}>
+            <td>{l.well_id ?? ""}</td><td>{l.hazard ? <><span className="swatch" style={{ background: HAZARD_COLOR[l.hazard] }} /> {HAZARD_SHORT[l.hazard] ?? l.hazard}</> : ""}</td>
+            <td>{fmName(l.formation)}</td><td className="small" style={{ maxWidth: 420 }}>{l.text}</td>
+            <td>{l.doc_id && l.page_no != null && <span className="cite small" onClick={() => openCitation({ doc_id: l.doc_id, page_no: l.page_no, start: l.start ?? 0,
+              end: l.end ?? 0, text: l.text, title: l.doc_title })}>{l.doc_title ?? l.doc_id} p.{l.page_no}</span>}</td></tr>)}</tbody></table>}
+    </div>
   </div>;
 }

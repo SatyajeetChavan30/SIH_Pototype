@@ -11,8 +11,31 @@ class RapidOCREngine:
     MIN_SCORE = 0.5    # recognitions below this are noise (speckle, stamps, rule lines)
 
     def __init__(self):
-        from rapidocr_onnxruntime import RapidOCR  # type: ignore
+        # rapidocr-onnxruntime (1.x) stops at Python 3.12; its successor, rapidocr (3.x), covers newer Pythons.
+        # Both ship their ONNX models inside the wheel, so neither needs the network at run time.
+        try:
+            from rapidocr_onnxruntime import RapidOCR  # type: ignore
+            self._v3 = False
+        except ImportError:
+            from rapidocr import RapidOCR  # type: ignore
+            self._v3 = True
+            self.name = "rapidocr-onnx v3"
         self._ocr = RapidOCR()
+
+    def _detect(self, png: bytes) -> list:
+        if self._v3:
+            det = self._ocr(png, use_det=True, use_cls=False, use_rec=False)
+            return [] if det.boxes is None else [b.tolist() for b in det.boxes]
+        boxes, _ = self._ocr(png, use_rec=False, use_cls=False)
+        return boxes or []
+
+    def _rec(self, crops: list) -> list[tuple[str, float]]:
+        if self._v3:
+            from rapidocr.ch_ppocr_rec import TextRecInput  # type: ignore
+            out = self._ocr.text_rec(TextRecInput(img=crops))
+            return list(zip(out.txts or (), out.scores or ()))
+        rec = self._rec(crops)
+        return [(t, sc) for t, sc in rec]
 
     def recognize(self, png: bytes) -> tuple[str, float]:
         """OCR a page in horizontal strips cut on blank rows (full-page recognition drops lines on A4 scans)."""
@@ -52,7 +75,7 @@ class RapidOCREngine:
         """
         import numpy as np
         from PIL import Image
-        boxes, _ = self._ocr(png, use_rec=False, use_cls=False)
+        boxes = self._detect(png)
         if not boxes:
             return "", 0.0, 0
         a = np.asarray(Image.open(io.BytesIO(png)).convert("L"))
@@ -70,7 +93,7 @@ class RapidOCREngine:
             geo.append((y0, y1, x0))
         if not crops:
             return "", 0.0, 0
-        rec, _ = self._ocr.text_rec(crops)
+        rec = self._rec(crops)
         # items: (top, bottom, left, text, score) -> rebuild reading order line by line
         items = [(y0, y1, x0, t.strip(), float(sc)) for (y0, y1, x0), (t, sc) in zip(geo, rec)
                  if t.strip() and float(sc) >= self.MIN_SCORE]

@@ -30,6 +30,35 @@ def log(msg: str) -> None:
     print(f"[build] {msg}", flush=True)
 
 
+def evaluate_ocr(db: DB, world: World, clf: SentenceClassifier, eval_dir) -> dict | None:
+    """Score OCR -> NLP on the same completion reports as text PDFs and as standard / poor scans.
+
+    Stored as kv 'ocr_eval'. Skipped (returns None) when no OCR engine is installed."""
+    from .ingest.ocr import get_ocr_engine
+    if get_ocr_engine() is None:
+        log("no OCR engine installed: skipping the scanned-report evaluation")
+        return None
+    log("evaluating OCR on scanned completion reports (standard and poor scans)")
+    srng = np.random.default_rng(7)
+    cands = [w for w in world.wells if w.events and not w.is_active]
+    scan_docs = []
+    for i in srng.choice(len(cands), size=min(12, len(cands)), replace=False):
+        w = cands[int(i)]
+        tp = eval_dir / f"{w.id}_WCR_text.pdf"
+        docs_gen.write_wcr(w, tp)
+        scans = {}
+        for q in docs_gen.SCAN_QUALITY:
+            scans[q] = eval_dir / f"{w.id}_WCR_scan_{q}.pdf"
+            docs_gen.rasterize_pdf(tp, scans[q], seed=len(w.id), quality=q)
+        truth = [{"hazard": e.hazard, "md": e.md, "formation": e.formation, "attempts": e.attempts} for e in w.events]
+        scan_docs.append((tp, w.id, truth, scans))
+    ocr_eval = evaluate_scans(scan_docs, clf, lambda wid: load_well_ctx(db, wid))
+    db.kv_set("ocr_eval", ocr_eval)
+    log("  event recall: text PDF {} · standard scan {} · poor scan {} ({} events)".format(
+        ocr_eval["text_pdf"]["recall"], ocr_eval["standard"]["recall"], ocr_eval["poor"]["recall"], ocr_eval["n_truth"]))
+    return ocr_eval
+
+
 def load_master_data(db: DB, world: World) -> None:
     for s in STRUCTURES:
         db.insert("structures", {"id": s.id, "name": s.name, "lat": s.lat, "lon": s.lon, "prod_start": s.prod_start})
@@ -169,26 +198,7 @@ def build(fresh: bool = True, eval_wells: int = 14) -> dict:
     db.kv_set("extraction_eval", {"held_out": ex_eval, "in_distribution": ex_in})
     log(f"  held-out F1={ex_eval['f1']} (P={ex_eval['precision']} R={ex_eval['recall']}); in-dist F1={ex_in['f1']}")
 
-    from .ingest.ocr import get_ocr_engine
-    if get_ocr_engine() is not None:
-        log("evaluating OCR on scanned completion reports (standard and poor scans)")
-        srng = np.random.default_rng(7)
-        cands = [w for w in world.wells if w.events and not w.is_active]
-        scan_docs = []
-        for i in srng.choice(len(cands), size=min(12, len(cands)), replace=False):
-            w = cands[int(i)]
-            tp = eval_dir / f"{w.id}_WCR_text.pdf"
-            docs_gen.write_wcr(w, tp)
-            scans = {}
-            for q in docs_gen.SCAN_QUALITY:
-                scans[q] = eval_dir / f"{w.id}_WCR_scan_{q}.pdf"
-                docs_gen.rasterize_pdf(tp, scans[q], seed=len(w.id), quality=q)
-            truth = [{"hazard": e.hazard, "md": e.md, "formation": e.formation, "attempts": e.attempts} for e in w.events]
-            scan_docs.append((tp, w.id, truth, scans))
-        ocr_eval = evaluate_scans(scan_docs, clf, lambda wid: load_well_ctx(db, wid))
-        db.kv_set("ocr_eval", ocr_eval)
-        log("  event recall: text PDF {} · standard scan {} · poor scan {} ({} events)".format(
-            ocr_eval["text_pdf"]["recall"], ocr_eval["standard"]["recall"], ocr_eval["poor"]["recall"], ocr_eval["n_truth"]))
+    evaluate_ocr(db, world, clf, eval_dir)
 
     log("writing drilling-parameter logs + active-well stream")
     lrng = np.random.default_rng(config.SEED + 1)

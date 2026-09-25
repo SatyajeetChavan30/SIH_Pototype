@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { OFFICE, roleLabel, useAuth, type Role } from "./auth";
 import { useApp, type View } from "./context";
 import { useLive } from "./live";
+import UploadModal from "./components/UploadModal";
 import Analytics from "./views/Analytics";
 import Correlation from "./views/Correlation";
 import Ingestion from "./views/Ingestion";
@@ -25,6 +27,7 @@ export default function App() {
   const { view: asked, go, meta } = useApp();
   const { user, can, logout } = useAuth();
   const [live] = useLive();
+  const [uploadOpen, setUploadOpen] = useState(false);
   const nav = NAV.filter((n) => !n.roles || can(...n.roles));
   const view = nav.some((n) => n.v === asked) ? asked : "live";   // a view this role cannot open falls back to Live Ops
   if (view === "rig") return <main className="main rigmain"><RigSite /></main>;
@@ -47,6 +50,7 @@ export default function App() {
       <span className="tag llm">LLM: {meta.llm.backend === "off" ? "off (grounded extractive)" : meta.llm.model}</span>
       {meta.synthetic ? <span className="tag synthetic" title={meta.ontology.region?.data_notice ?? "All data in this demo is synthetic"}>SYNTHETIC DEMO DATA</span>
         : <span className="tag live" title={meta.ontology.region?.data_notice}>REAL PUBLIC DATA · Sodir (NLOD)</span>}
+      {can(...OFFICE) && <button className="btn sm upload" onClick={() => setUploadOpen(true)} title="Upload a DDR/WCR PDF or WITSML XML">⇪ <span>Upload report</span></button>}
       {user && <span className="tag user" title={`Signed in as ${user.username}`}><b>{user.display_name}</b> <span className="muted">{roleLabel(user.role)}</span>
         <button className="linkbtn" onClick={logout}>Sign out</button></span>}
     </header>
@@ -67,5 +71,6 @@ export default function App() {
       {view === "ingest" && <Ingestion />}
       {view === "analytics" && <Analytics />}
     </main>
+    {uploadOpen && <UploadModal onClose={() => setUploadOpen(false)} />}
   </div>;
 }

@@ -6,6 +6,10 @@ Unlike classic case-based reasoning (e.g. DrillEdge), cases are not hand-built: 
 """
 from __future__ import annotations
 
+import hashlib
+import json
+
+import joblib
 import numpy as np
 
 from .. import config
@@ -19,10 +23,14 @@ STEP_M = 10.0
 
 def window_features(md, torque, spp, rop, gas, flow_out, ecd, mw, dxc, fm_idx) -> np.ndarray:
     """Scale-free features of a depth window."""
+    x = md - md.mean()
+    sxx = float(np.dot(x, x))
+
     def slope(y):
-        if len(y) < 3 or np.ptp(md) < 1:
+        # least-squares slope per window length (same as polyfit deg 1, without its per-call overhead)
+        if len(y) < 3 or np.ptp(md) < 1 or sxx <= 0:
             return 0.0
-        return float(np.polyfit(md - md[0], y, 1)[0] * WIN_M)
+        return float(np.dot(x, y - y.mean()) / sxx * WIN_M)
     t_ratio = torque / (np.median(torque) + 1e-6)
     f = [
         float(np.mean(torque[-5:]) / (np.median(torque) + 1e-6)), slope(t_ratio), float(np.std(t_ratio)),
@@ -38,16 +46,63 @@ def window_features(md, torque, spp, rop, gas, flow_out, ecd, mw, dxc, fm_idx) -
     return np.concatenate([np.array(f), fm])
 
 
+CACHE_VERSION = 1
+
+
+def _case_events(w) -> list[dict]:
+    return [e for e in w.events if e["md"] is not None]
+
+
+def _signature(wells: list, logs: dict) -> str:
+    """Changes whenever an offset log or an offset event changes (a new ingest), so the cache never goes stale."""
+    parts = [CACHE_VERSION, WIN_M, AHEAD_M, STEP_M, FORMATION_ORDER]
+    for w in wells:
+        st = logs[w.id].stat()
+        evs = [[e["id"], e["md"], e["hazard"], e["summary"], e.get("resolved"),
+                e["citations"][0] if e["citations"] else None] for e in _case_events(w)]
+        parts.append([w.id, st.st_mtime_ns, st.st_size, evs])
+    return hashlib.sha1(json.dumps(parts, default=str).encode()).hexdigest()
+
+
 class AnalogIndex:
-    def __init__(self, kb: KnowledgeBase):
+    def __init__(self, kb: KnowledgeBase, cache: bool = True):
+        wells = [w for w in kb.offsets() if (config.LOGS_DIR / f"{w.id}.npz").exists()]
+        logs = {w.id: config.LOGS_DIR / f"{w.id}.npz" for w in wells}
+        sig = _signature(wells, logs)
+        cache_path = config.MODELS_DIR / "analog_index.joblib"
+        cached = None
+        if cache and cache_path.exists():
+            try:
+                cached = joblib.load(cache_path)
+            except Exception:  # noqa: BLE001 - a corrupt cache or one from another numpy: rebuild
+                cached = None
+        if cached and cached.get("signature") == sig:
+            X, meta = cached["X"], cached["meta"]
+        else:
+            X, meta = self._build(wells, logs)
+            if cache:
+                try:
+                    joblib.dump({"signature": sig, "X": X, "meta": meta}, cache_path)
+                except OSError:   # read-only data dir: the index still works, it just rebuilds next start
+                    pass
+        width = 12 + len(FORMATION_ORDER)
+        self.X = X if len(X) else np.zeros((0, width))
+        # no offset logs at all (e.g. public data without drilling-parameter logs): an empty index, not a crash
+        self.mu = self.X.mean(axis=0) if len(self.X) else np.zeros(width)
+        self.sd = self.X.std(axis=0) + 1e-6 if len(self.X) else np.ones(width)
+        self.sd[12:] = 1.0
+        self.Z = (self.X - self.mu) / self.sd
+        self.meta = meta
+
+    @staticmethod
+    def _build(wells: list, logs: dict) -> tuple[np.ndarray, list[dict]]:
         feats, meta = [], []
-        for w in kb.offsets():
-            p = config.LOGS_DIR / f"{w.id}.npz"
-            if not p.exists():
-                continue
-            z = np.load(p)
+        for w in wells:
+            p = logs[w.id]
+            with np.load(p) as npz:
+                z = {k: npz[k] for k in npz.files}   # NpzFile re-reads the zip on every key access
             md = z["md"].astype(float)
-            evs = [e for e in w.events if e["md"] is not None]
+            evs = _case_events(w)
             for end in np.arange(WIN_M + 200, md[-1] - 5, STEP_M):
                 sel = (md > end - WIN_M) & (md <= end)
                 if sel.sum() < 8:
@@ -60,14 +115,7 @@ class AnalogIndex:
                              "next": [{"id": e["id"], "hazard": e["hazard"], "md": e["md"], "summary": e["summary"],
                                        "resolved": e.get("resolved"), "citation": e["citations"][0] if e["citations"] else None}
                                       for e in nxt]})
-        width = 12 + len(FORMATION_ORDER)
-        self.X = np.array(feats) if feats else np.zeros((0, width))
-        # no offset logs at all (e.g. public data without drilling-parameter logs): an empty index, not a crash
-        self.mu = self.X.mean(axis=0) if len(self.X) else np.zeros(width)
-        self.sd = self.X.std(axis=0) + 1e-6 if len(self.X) else np.ones(width)
-        self.sd[12:] = 1.0
-        self.Z = (self.X - self.mu) / self.sd
-        self.meta = meta
+        return np.array(feats), meta
 
     def query(self, f: np.ndarray, k: int = 5, exclude_well: str | None = None) -> dict:
         if len(self.Z) == 0:

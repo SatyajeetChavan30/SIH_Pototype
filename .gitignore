@@ -7,6 +7,11 @@ __pycache__/
 # Generated demo data (rebuild with: python -m nwis.cli build-demo)
 /data/
 /data_norway/
+# dashboard rebuilds: staged builds and the previous folder kept as a backup
+/data.next-*/
+/data.bak-*/
+/data_norway.next-*/
+/data_norway.bak-*/
 # Frontend
 frontend/node_modules/
 frontend/dist/

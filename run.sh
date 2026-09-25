@@ -23,7 +23,7 @@ if ! python -c "import nwis" 2>/dev/null; then
 fi
 
 if [ "${1:-}" = "--rebuild" ] || [ ! -f data/nwis.db ]; then
-  echo "[nwis] building synthetic Upper-Assam knowledge base (~2 min)"
+  echo "[nwis] building synthetic Upper-Assam knowledge base (~2 min; ~8 min with OCR installed)"
   (cd backend && python -m nwis.cli build-demo)
 fi
 

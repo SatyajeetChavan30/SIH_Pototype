@@ -155,7 +155,7 @@ All numbers below are **targets** for the pilot and full deployment. They are no
 
 | Stage | Scope | Exit criteria |
 |---|---|---|
-| **0. SIH prototype** (done) | Synthetic Upper-Assam dataset, seven views, role-based sign-in, 65 tests. First versions of pillars A–G are built: memos, reviews, handover, DTW QC, physics baselines, alarm budget, what-if, case-mix ranking and the decision log. See [`SOLUTION.md`](SOLUTION.md) | Mechanisms demonstrated and measured on known ground truth |
+| **0. SIH prototype** (done) | Synthetic Upper-Assam dataset, seven views, role-based sign-in, 69 tests, plus a real public-data mode on Norwegian North Sea records (Sodir). First versions of pillars A–G are built: memos, reviews, handover, DTW QC, physics baselines, alarm budget, what-if, case-mix ranking and the decision log. See [`SOLUTION.md`](SOLUTION.md) | Mechanisms demonstrated and measured on known ground truth |
 | **1. Archive pilot** | One field, 3–5 years of DDR/WCR plus master data. Local labelling of about 100 report-days, following the non-transfer finding in [7] | Extraction F1 ≥ 0.85 on OIL data. Risk AUC beats the nearest-offset baseline. Planners confirm hazard briefs match their experience |
 | **2. Shadow mode** | Live beside eRTMAC on the 4 e-RTMAC rigs [1]. Alerts go to the RTOC only, not the rig. Decision black box on | Look-ahead coverage ≥ 60%. Alert load within budget. Enough labelled feedback to calibrate detectors |
 | **3. Advisory mode** | All Assam and Arunachal rigs. Rig-site tablet view. Voice capture and after-action reviews live | Alert usefulness ≥ 60%. Measurable fall in hazard-related NPT in pilot fields |
@@ -165,7 +165,7 @@ All numbers below are **targets** for the pilot and full deployment. They are no
 
 | Risk | Mitigation |
 |---|---|
-| Access to OIL archives and master data is slow | Start with one field. The pipeline already runs on public Volve WITSML data, so integration work can start before access is granted. |
+| Access to OIL archives and master data is slow | Start with one field. The pipeline already runs on public Volve WITSML reports and Sodir North Sea well records, so integration work can start before access is granted. |
 | OCR quality on old scans | Cross-document consolidation, confidence scores and a human review queue. DDRs usually repeat what the WCR says. |
 | Models trained on synthetic data do not transfer | Expected, not a surprise [7]. Budget for local labelling. Report metrics per field. |
 | Alarm fatigue | False-alarm budget, fusion, cool-downs and escalation only on corroboration. Alerts are reviewed in shadow mode before they reach the rig. |

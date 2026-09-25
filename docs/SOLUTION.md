@@ -41,10 +41,10 @@ flowchart LR
   P --> U
 ```
 
-- **Backend:** Python 3.11 with FastAPI, REST plus a WebSocket at `/ws/live`.
+- **Backend:** Python 3.10+ (tested up to 3.14) with FastAPI, REST plus a WebSocket at `/ws/live`.
   - Storage is SQLite, so there's nothing to install for the demo; PostgreSQL + PostGIS in production.
   - Analytics libraries: scikit-learn, SciPy, NumPy.
-  - PDF handling is PyMuPDF. OCR is RapidOCR (ONNX, pip-only), with Tesseract as a fallback.
+  - PDF handling is PyMuPDF. OCR is RapidOCR (ONNX, pip-only; `rapidocr-onnxruntime` 1.x up to Python 3.12, `rapidocr` 3.x on newer Pythons), with Tesseract as a fallback.
 - **Frontend:** React 18 + TypeScript (Vite), Leaflet for the map, custom SVG charts, and d3-force for the graph.
 - **Air-gapped by design:** no cloud APIs. The optional LLM is a local Ollama, off by default. It may only rephrase retrieved facts, and a **citation guard** drops any sentence without a valid citation.
 
@@ -98,7 +98,7 @@ Baselines are robust rolling medians. They reset after a mud-weight change or a 
 - **Mitigation ranking:** mitigations are ranked by *outcome*, not habit. The measures are Laplace-smoothed cure rate, first-try success and median NPT, over offset events in the same formation, widening to the basin when evidence is thin.
 - **What the data rediscovers:** fine LCM fails in fractured Sylhet (1/11) while cement plugs work (2/2). Sized CaCO₃ works in depleted Tipam.
 - **Case-mix adjustment:** raw cure rates are confounded, because cement plugs go on total losses and on cases where other treatments already failed. Each action is therefore ranked by an **indirectly standardised** cure rate: what it achieved compared with what an average treatment achieved on cases of the same severity and attempt order, shrunk toward the overall rate when attempts are few. Two lucky attempts cannot claim a 97% cure rate, and a ⚖ marks actions whose raw and adjusted rates differ a lot.
-- **Analog Replay:** a modern, fully automatic take on case-based reasoning. Every 30 m window of every offset log is a case. The live window is matched by kNN, and NWIS shows **what happened next** (≤60 m), with sources.
+- **Analog Replay:** a modern, fully automatic take on case-based reasoning. Every 30 m window of every offset log is a case. The live window is matched by kNN, and NWIS shows **what happened next** (≤60 m), with sources. The case index is cached on disk under a signature of every offset log and offset event, so the server starts without rebuilding it, and any new ingest invalidates it automatically.
 
 ### 3.7 Evidence-grounded document understanding
 - **Records and sentence roles:** reports are segmented into time-log records. Each sentence gets a role: *event, action, outcome, negated, hypothetical, lesson*.
@@ -107,6 +107,7 @@ Baselines are robust rolling medians. They reset after a mud-weight change or a 
 - **Units** are normalised: m/ft, ppg/SG/pcf, bbl/hr and m³/hr, klbs/t.
 - **Hazard classification** is an ensemble of a domain lexicon (specific terms win: "losses during cementing" is CEMENT, not LOSS) and a TF-IDF + logistic-regression sentence classifier.
 - **OCR path:** the page is cut into strips at blank rows and RapidOCR detects the text lines in each strip. Each line is then recognised on its own from a padded, upright crop, **without the angle classifier**: the classifier flipped long full-width report lines to 180° and they came back empty, and tight crops made the recogniser drop word spaces. After that come digit repair inside numbers ("3,21l m" → "3,211 m", "1,O45" → "1,045", never touching words) and domain word-segmentation for any spaces still missing. Section headings and report types are matched whitespace-tolerantly ("2.CASINGPOLICY").
+- **Scans stored before OCR was installed.** Without an OCR engine a scanned page is kept, flagged and left unread rather than rejected. Ingestion lists these documents, and one click (or `python -m nwis.cli reread-scans`) re-reads them through OCR once it is installed. `python -m nwis.cli evaluate-ocr` re-scores scan recall without a full rebuild.
 - **Casing-shoe depths:** a cementing sentence that names its string ("cementing of 9-5/8\" casing") is placed at that string's shoe from master data. On poor scans a lost bullet dash can merge two complications into one record, and this stops the cementing event from borrowing the other one's depth.
 - **Consolidation:** events are merged across days and documents, keeping all citations.
 - **Confidence:** confidence below 0.7 routes an event to the review queue. Approvals become new training sentences (active learning).
@@ -197,17 +198,24 @@ Planners edit mud weight, ECD or casing-shoe depth per section and the offset mo
 - **Offline picture.** The live picture (bit depth, formation, next top, MW/ECD against the window, the top alert and what worked) is kept on the device. With the link down it is shown under an **OFFLINE: last known picture from HH:MM** banner.
 - **Queued acknowledgements.** Acknowledgements made offline are queued on the device and delivered on reconnect, carrying the original time, `acted_at` and `queued_offline`. If the alert no longer exists on the server, the action is still written to the decision log and marked `unmatched`.
 
+### 3.20 Real public-data mode (Norwegian North Sea)
+- **Why.** OIL's nine data sources are internal, so a second, real knowledge base checks that the pipeline works on genuine records, not only on data it generated itself. [`DATA_SOURCES.md`](DATA_SOURCES.md) maps each OIL source to its public stand-in.
+- **Build.** `./run.sh --public` (or `python -m nwis.cli build-public --download --quadrants 15,16` with `NWIS_REGION=norway` and a separate `NWIS_DATA_DIR`) fetches five Sodir FactPages CSV exports once, caches them for offline use, and loads near-vertical exploration wellbores with their lithostratigraphic tops, casing, mud weights and LOT/FIT tests. The wellbore-history narratives run through the same NLP pipeline as DDRs and WCRs.
+- **Region.** `NWIS_REGION=norway` swaps the Upper-Assam stratigraphy for North Sea groups (Nordland … Hegre); well-known formation names map to their group, e.g. Draupne → Viking.
+- **Scale (quadrants 15 and 16, the Sleipner / Volve / Utsira High area).** 173 wellbores, 170 wellbore histories, 1,145 group tops, 817 hole sections, 339 LOT/FIT tests and about 90 extracted events, all cited to the history they came from.
+- **Licence.** NLOD 2.0. The required attribution is stored with the build and given in `DATA_SOURCES.md`.
+
 ## 4. Measured results (synthetic Upper-Assam dataset, reproducible)
 
-`python -m nwis.cli build-demo` generates the data. It is deterministic (seed 26121) and takes about 8 minutes on a 4-core machine, including the OCR evaluation. It produces **59 offset wells, 118 PDFs (4 scanned), 2,100+ pages, 132 extracted events (against 132 true events), 123 lessons, and 1,100+ citations**.
+`python -m nwis.cli build-demo` generates the data. It is deterministic (seed 26121) and takes about 2 minutes, or about 8 minutes on a 4-core machine when an OCR engine is installed, because the scanned-report evaluation then runs too. It produces **59 offset wells, 118 PDFs (4 scanned), 2,100+ pages, 132 extracted events (against 132 true events), 123 lessons, and 1,100+ citations**.
 
 | Capability | Metric | Result |
 |---|---|---|
 | Event extraction, **held-out phrasing** (ALL-CAPS rig shorthand, different units, never seen by the classifier; 14 DDRs, 30 true events) | Precision / Recall / F1 | **1.00 / 0.87 / 0.93** |
 | | Formation accuracy · depth MAE · mitigation Jaccard | 1.00 · 0.6 m · 1.00 |
 | Scanned WCRs (the same 12 reports as text PDFs and as scans → OCR → NLP; 32 true events) | Event recall · precision, text PDF (ceiling) | 1.00 · 1.00 |
-| | Standard scan (200 dpi, slight skew, noise) | **1.00 · 1.00**, 5% of characters differ from the text layer, depth MAE 0.5 m |
-| | Poor scan (150 dpi photocopy, 1° skew, heavy noise) | **0.97 · 0.97**, formation accuracy 0.77 (merged records on lost bullets) |
+| | Standard scan (200 dpi, slight skew, noise) | **1.00 · 1.00**, 4% of characters differ from the text layer, depth MAE 0.5 m |
+| | Poor scan (150 dpi photocopy, 1° skew, heavy noise) | **1.00 · 1.00**, formation accuracy 1.00, depth MAE 0.5 m (RapidOCR 3.x, PP-OCRv6; the older rapidocr-onnxruntime 1.x scored 0.97 · 0.97 with formation accuracy 0.77, from merged records on lost bullets) |
 | Risk prediction, leave-wells-out, features from *earlier* wells only; pooled ROC-AUC | Nearest offset well (typical manual practice) | 0.583 |
 | | Formation base rate | 0.833 |
 | | Offset evidence (Beta-Binomial) | 0.838 |
@@ -224,7 +232,7 @@ Planners edit mud weight, ECD or casing-shoe depth per section and the offset mo
 
 **Honesty note:** these numbers validate the *pipeline mechanics* on synthetic data with known ground truth, which is why they can be measured at all. They are not field performance. The first pilot step is to re-measure them on OIL's own DDR/WCR archive (§7).
 
-`pytest` (65 tests) enforces these claims, as well as unit parsing, negation, minimum curvature, WITS-0 and WITSML parsing, the API/WebSocket surface, decision-log tamper detection, conformal false-alarm rates, physics baselines, DTW alignment, what-if isolation, memo peer review, after-action reviews, the handover brief, OCR repairs and scan recall, and sign-in with role enforcement. The live-alerting numbers come from `python -m nwis.cli evaluate-live`, which `build-demo` also runs.
+`pytest` (69 tests) enforces these claims, as well as unit parsing, negation, minimum curvature, WITS-0 and WITSML parsing, the API/WebSocket surface, decision-log tamper detection, conformal false-alarm rates, physics baselines, DTW alignment, what-if isolation, memo peer review, after-action reviews, the handover brief, OCR repairs, scan recall, re-reading scans stored before OCR was installed, and sign-in with role enforcement. The live-alerting numbers come from `python -m nwis.cli evaluate-live`, which `build-demo` also runs.
 
 ## 5. Seven-minute demo script (for judges)
 
@@ -281,9 +289,8 @@ The staged path to full deployment, with exit criteria and target metrics, is in
 
 ## 8. Known limitations (stated up-front)
 
-- **Data.** The demo is synthetic because OIL's nine data sources are internal. A real public-data mode (Norwegian North Sea, Sodir FactPages, NLOD) runs the same pipeline on genuine wells, tops, casing, mud and incident histories; see [`DATA_SOURCES.md`](DATA_SOURCES.md), which also explains how to request real Assam data from DGH's National Data Repository.
-
-- The demo data is synthetic, though calibrated to published Assam geology. Metrics are about mechanism, not field accuracy.
+- **Data.** The demo is synthetic because OIL's nine data sources are internal. It is calibrated to published Assam geology, so the metrics are about mechanism, not field accuracy. A real public-data mode (§3.20) runs the same pipeline on genuine wells, tops, casing, mud and incident histories; [`DATA_SOURCES.md`](DATA_SOURCES.md) also explains how to request real Assam data from DGH's National Data Repository.
+- **Public-data mode is a pipeline check, not a skill measurement.** Sodir histories are summaries, so incidents are under-reported (8 loss and 10 kick events across 173 wells in quadrants 15–16). With that few positives the leave-wells-out risk AUCs are not meaningful, ECD is approximated as mud weight + 0.3 ppg, and only near-vertical wells are used, so MD is treated as TVD. North Sea geology is not Assam.
 - OCR is measured on synthetic scans (a clean 200-dpi scan and a 150-dpi photocopy), not on OIL's archive. Handwriting, stamps over text, tables with ruled grids and faded carbon copies are not in the test set. The design compensates with confidence scores, the review queue and cross-document consolidation, since DDRs usually repeat what the WCR says.
 - Sign-in uses local accounts stored in the NWIS database. Production would federate with OIL's directory (SSO/LDAP), and the session secret should be set explicitly (`NWIS_SECRET`) when more than one server shares users.
 - The stuck-pipe ML model underperforms the base rate in cross-validation (0.68 vs 0.78 AUC). The blend therefore gives it weight 0, so stuck-pipe risk comes from offset evidence and the real-time risk index.

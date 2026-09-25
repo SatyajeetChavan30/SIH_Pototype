@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = Path(os.environ.get("NWIS_DATA_DIR", ROOT / "data"))
+DATA_HOME = DATA_DIR   # the configured folder; DATA_DIR moves to a staged rebuild when one is switched in live
 DB_PATH = DATA_DIR / "nwis.db"
 DOCS_DIR = DATA_DIR / "documents"
 LOGS_DIR = DATA_DIR / "logs"
@@ -45,6 +46,17 @@ TILE_ATTRIBUTION = os.environ.get("NWIS_TILE_ATTRIBUTION", "&copy; OpenStreetMap
 
 # Optional on-prem speech-to-text for expert voice memos (pip install "nwis[asr]"; weights must be cached).
 ASR_MODEL = os.environ.get("NWIS_ASR_MODEL", "small")
+
+
+def set_data_dir(path: Path) -> None:
+    """Point every data path at another folder (used when a rebuilt knowledge base is switched in live)."""
+    global DATA_DIR, DB_PATH, DOCS_DIR, LOGS_DIR, MODELS_DIR, UPLOADS_DIR
+    DATA_DIR = Path(path)
+    DB_PATH = DATA_DIR / "nwis.db"
+    DOCS_DIR = DATA_DIR / "documents"
+    LOGS_DIR = DATA_DIR / "logs"
+    MODELS_DIR = DATA_DIR / "models"
+    UPLOADS_DIR = DATA_DIR / "uploads"
 
 
 def ensure_dirs() -> None:

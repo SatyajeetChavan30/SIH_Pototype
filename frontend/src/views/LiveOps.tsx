@@ -1,19 +1,26 @@
-import { useAuth } from "../auth";
+import { OFFICE, useAuth } from "../auth";
 import { useMemo, useState } from "react";
 import { useApp } from "../context";
 import { AlertCard, AlertDrawer } from "../components/AlertPanel";
 import BriefModal from "../components/BriefModal";
 import DepthRibbon from "../components/DepthRibbon";
 import RigPanel, { OfflineBanner } from "../components/RigPanel";
+import SimulatorCard from "../components/SimulatorCard";
 import StripChart from "../components/StripChart";
 import { getActor, setActor, useLive } from "../live";
-import { HAZARD_COLOR, LEVEL, fmt } from "../theme";
+import { HAZARD_COLOR, HAZARD_SHORT, LEVEL, fmt } from "../theme";
 import type { Alert } from "../types";
 
 const LEVEL_RANK: Record<string, number> = { critical: 3, warning: 2, watch: 1, info: 0 };
 
+// "Overpressure transition and kick in lower Barail" -> " · Barail": the full label stays in the tooltip
+const episodePlace = (label: string) => {
+  const where = label.split(" ").slice(1).find((w) => /^[A-Z]/.test(w));
+  return where ? ` · ${where}` : "";
+};
+
 export default function LiveOps() {
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const { meta, fmName } = useApp();
   const [live, send, setMode] = useLive();
   const [sel, setSel] = useState<string | null>(null);
@@ -63,7 +70,7 @@ export default function LiveOps() {
     <span className="small muted">Jump to:</span>
     {live.episodes.map((e) => <button key={e.id} className={`btn sm ${st?.episode === e.id ? "primary" : ""}`} title={e.label}
       onClick={() => { setSel(null); send({ cmd: "jump", episode: e.id }); }}>
-      <span className="swatch" style={{ background: HAZARD_COLOR[e.hazard] }} /> {e.id} · {e.label.split(" ").slice(0, 3).join(" ")}</button>)}
+      <span className="swatch" style={{ background: HAZARD_COLOR[e.hazard] }} /> {e.id} · {HAZARD_SHORT[e.hazard] ?? e.hazard}{episodePlace(e.label)}</button>)}
     <button className="btn sm ghost" onClick={() => { setSel(null); send({ cmd: "restart" }); }}>↺ Restart</button>
     <label className="small row" style={{ gap: 4 }} title="Pause the replay whenever a new critical alert opens">
       <input type="checkbox" checked={live.autoPause} onChange={(e) => send({ cmd: "autoPause", value: e.target.checked })} /> auto-pause on critical</label>
@@ -87,6 +94,7 @@ export default function LiveOps() {
   const stream = st?.stream;
   const statusBanners = <>
     <OfflineBanner live={live} />
+    {isLive && can(...OFFICE) && <SimulatorCard />}
     {isLive && st?.waiting && <div className="banner">Linked to {stream?.describe ?? "the rig feed"}; waiting for the first WITS packet…</div>}
     {isLive && live.events.find((e) => e.type === "stream_gap" || e.type === "stream_resumed")?.type === "stream_gap" &&
       <div className="banner" style={{ borderColor: LEVEL.warning.color }}>⚠ {live.events.find((e) => e.type === "stream_gap")!.message}</div>}

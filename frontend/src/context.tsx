@@ -13,6 +13,9 @@ interface AppCtx {
   params: Record<string, string>;
   go: (v: View, params?: Record<string, string>) => void;
   openCitation: (c: Citation) => void;
+  /** Result of the last upload made outside the Ingestion view, shown there as the pipeline trace. */
+  lastIngest: any | null;
+  setLastIngest: (r: any | null) => void;
 }
 
 const Ctx = createContext<AppCtx | null>(null);
@@ -32,6 +35,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [err, setErr] = useState<string | null>(null);
   const [[view, params], setRoute] = useState(parseHash());
   const [cite, setCite] = useState<Citation | null>(null);
+  const [lastIngest, setLastIngest] = useState<any | null>(null);
 
   useEffect(() => {
     // cache /api/meta so the rig-site view still opens when the link to the server is down
@@ -61,6 +65,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     hz: (c) => (c ? hzMap[c] : undefined),
     go: (v, p) => { location.hash = `/${v}${p ? "?" + new URLSearchParams(p).toString() : ""}`; },
     openCitation: (c) => setCite(c),
+    lastIngest, setLastIngest,
   };
   return <Ctx.Provider value={value}>
     {children}

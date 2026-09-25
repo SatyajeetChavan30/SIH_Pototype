@@ -38,6 +38,7 @@ RULES: list[tuple[str | None, str, tuple[str, ...]]] = [
     ("POST", "/api/aar/", OFFICE),
     ("POST", "/api/risk/whatif", OFFICE),
     (None, "/api/analytics", OFFICE),
+    (None, "/api/jobs", OFFICE),        # admin-only kinds (knowledge-base rebuilds) are checked by the endpoint
     (None, "/api/audit/verify", ("admin",)),
     (None, "/api/users", ("admin",)),
 ]

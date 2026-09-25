@@ -28,7 +28,8 @@ Full rationale: [`docs/VISION.md`](docs/VISION.md) (end goal, success metrics, s
 Requirements: Python 3.10+ and Node 18+.
 
 ```bash
-./run.sh            # installs deps, builds the synthetic knowledge base (~8 min on 4 cores), builds the UI, serves it
+./run.sh            # installs deps, builds the synthetic knowledge base, builds the UI, serves it
+                    # (build ~2 min; ~8 min on 4 cores with OCR installed, which adds the scanned-report evaluation)
 # open http://localhost:8000 and sign in: field / office / admin, password "demo"
 ```
 
@@ -38,15 +39,33 @@ Other modes:
 ```bash
 ./run.sh --rebuild  # regenerate all demo data
 ./run.sh --dev      # backend :8000 + Vite hot-reload :5173
+./run.sh --public   # real public North Sea data (Sodir FactPages, NLOD) instead of the synthetic demo; see docs/DATA_SOURCES.md
 ```
 
 Manual steps:
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e "backend[dev,ocr]"          # the [ocr] extra (RapidOCR) is optional; without it scans are flagged "needs OCR"
-cd backend && python -m nwis.cli build-demo && python -m nwis.cli serve
+pip install -e "backend[dev,ocr]"          # the [ocr] extra (RapidOCR) is optional; without it scans are stored unread and flagged
 cd frontend && npm install && npm run build   # the server then serves frontend/dist
+cd ../backend && python -m nwis.cli build-demo && python -m nwis.cli serve
 ```
+
+Most of the commands below can also be run from the dashboard, without a terminal:
+- **⇪ Upload reports** (top bar, office and admin): one file, many files or a whole folder of DDR/WCR PDFs and WITSML XML.
+- **Analytics › Maintenance** (office): re-run the live evaluation, re-score OCR, retrain the risk model, and retrain the sentence classifier from review-queue verdicts (`retrain-risk`, `retrain-classifier` on the CLI). Admins can also rebuild the demo or build the North Sea data. A rebuild runs in a separate folder while the current data stays live, then switches over, or waits for the next start if a live rig feed is connected. User accounts, sign-ins, the decision log and alert feedback are kept, and the previous folder stays as `data.bak-<date>`.
+- **Live Ops › Rig simulator** (office, when NWIS runs with `NWIS_STREAM=wits0-listen:PORT`): starts and stops `simulate-rig`.
+- **Knowledge › Browse all** lists every event and lesson. **Ingestion** shows review history (approved and rejected). **Analytics › Decision log** browses the log, and admins can re-verify the hash chain there.
+
+Every job started from the dashboard is recorded in the decision log under the name of whoever started it.
+
+Installed OCR after `build-demo`? No rebuild is needed:
+```bash
+cd backend
+python -m nwis.cli reread-scans    # OCR the scanned documents that were stored unread (also a button in Ingestion)
+python -m nwis.cli evaluate-ocr    # re-score scanned-report recall (standard and poor scans) for Analytics
+```
+
+The `[ocr]` extra installs `rapidocr-onnxruntime` 1.x on Python ≤ 3.12 and its successor `rapidocr` 3.x on 3.13+. Both bundle their models in the wheel, so OCR runs offline.
 
 Import real WITSML drillReport XML (e.g. the public Equinor Volve DDRs):
 ```bash
@@ -90,8 +109,8 @@ NWIS_LLM=ollama OLLAMA_MODEL=llama3.1:8b python -m nwis.cli serve
 | **Offset Map** | Wells within a user-defined radius, coloured by dominant hazard. Click anywhere to assess a planned location. |
 | **Correlation** | Offset logs side by side; flatten on a formation top and the Tipam thief sand lines up. |
 | **Risk & Planning** | Depth × hazard risk with CIs, headline zones, MW window vs plan, **what-if planner** (MW / ECD / casing points), printable Offset Hazard Brief. |
-| **Knowledge** | Search with auto-parsed filters, "Ask NWIS" with numbered citations, knowledge graph (what cured what), **after-action review** on any event. |
-| **Ingestion** | Upload PDF/XML or use a sample. Sentence-level NLP trace, extracted events, human review queue, **expert memo** capture with peer review. |
+| **Knowledge** | Search with auto-parsed filters and **CSV export** of every match with its source page, "Ask NWIS" with numbered citations, knowledge graph (what cured what), **after-action review** on any event. |
+| **Ingestion** | Upload PDF/XML or use a sample. Sentence-level NLP trace, extracted events, human review queue, **expert memo** capture with peer review. Scans stored before OCR was installed are flagged, with a one-click re-read. |
 | **Analytics** | Model skill vs baselines, extraction F1, NPT Pareto, calibration, what-if value, alarm-budget trade-off, DTW top-pick accuracy, decision-log verification. |
 
 <details><summary>More screenshots</summary>
@@ -102,7 +121,9 @@ NWIS_LLM=ollama OLLAMA_MODEL=llama3.1:8b python -m nwis.cli serve
 | ![](docs/screenshots/06_risk_planning.png) | ![](docs/screenshots/07_correlation.png) |
 | ![](docs/screenshots/08_knowledge_search.png) | ![](docs/screenshots/11_ingestion.png) |
 | ![](docs/screenshots/10_graph.png) | ![](docs/screenshots/12_analytics.png) |
-| ![](docs/screenshots/13_sign_in.png) | |
+| ![](docs/screenshots/14_upload_reports.png) | ![](docs/screenshots/15_maintenance_jobs.png) |
+| ![](docs/screenshots/16_rig_simulator.png) | ![](docs/screenshots/18_handover_brief.png) |
+| ![](docs/screenshots/13_sign_in.png) | ![](docs/screenshots/17_rig_site_app.png) |
 </details>
 
 ## Repository layout
@@ -121,10 +142,11 @@ backend/nwis/
   auth.py                 sign-in (PBKDF2 + signed cookie) and the field / office / admin access policy
   realtime/sources.py hub.py simulator.py   WITS-0 TCP / WITSML sources, shared live session, rig simulator
   validate/volve.py       real-data check on the public Equinor Volve reports
+  public/sodir.py         real public-data build from Sodir FactPages (North Sea wells, tops, casing, mud, LOT/FIT, histories)
   api/main.py             FastAPI REST + /ws/live WebSocket, serves the UI
-backend/tests/            65 tests (NLP, OCR, geometry, parsers, model claims, live replay, API, sign-in and roles, vision features, live feed, public-data validation)
+backend/tests/            69 tests (NLP, OCR, geometry, parsers, model claims, live replay, API, sign-in and roles, vision features, live feed, public-data validation, Norway region)
 frontend/src/             React + TypeScript views and components
-docs/                     VISION.md, RESEARCH.md, SOLUTION.md, screenshots
+docs/                     VISION.md, RESEARCH.md, SOLUTION.md, DATA_SOURCES.md, screenshots
 ```
 
 ## Tests

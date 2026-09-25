@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import difflib
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 
 import joblib
@@ -425,6 +426,35 @@ class SentenceClassifier:
         except Exception:
             c.pipe = None
         return c
+
+
+def retrain_from_reviews(db, log=print) -> dict:
+    """Re-fit the sentence classifier on its original training set plus every reviewer verdict (active learning).
+
+    Approving an event in the review queue stores its cited sentence under its hazard; rejecting one stores it as
+    NONE (kv 'verified_sentences', written by the review endpoint). The previous model is kept as
+    sentence_clf.prev.joblib. Only documents ingested afterwards are affected."""
+    import datetime as dt
+    import shutil
+
+    from .. import config
+    from ..validate.volve import training_sentences
+
+    verified = [s for s in db.kv_get("verified_sentences", []) if s.get("text") and s.get("label")]
+    if not verified:
+        raise ValueError("no reviewed sentences yet: approve or reject items in the review queue first")
+    base = training_sentences()
+    log(f"re-fitting on {len(base)} original + {len(verified)} reviewed sentences")
+    path = config.MODELS_DIR / "sentence_clf.joblib"
+    if path.exists():
+        shutil.copy(path, config.MODELS_DIR / "sentence_clf.prev.joblib")
+    rows = base + verified
+    SentenceClassifier().fit([r["text"] for r in rows], [r["label"] for r in rows]).save(path)
+    info = {"date": dt.datetime.now().isoformat(timespec="seconds"), "n_base": len(base), "n_verified": len(verified),
+            "labels": dict(Counter(r["label"] for r in verified))}
+    db.kv_set("classifier_retrain", info)
+    log(f"saved {path.name}")
+    return info
 
 
 # ---------------------------------------------------------------------------

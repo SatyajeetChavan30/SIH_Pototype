@@ -1,5 +1,5 @@
-"""Command line: python -m nwis.cli build-demo | serve | import-volve <dir> | metrics | evaluate-live | simulate-rig |
-validate-volve <dir>"""
+"""Command line: python -m nwis.cli build-demo | serve | import-volve <dir> | metrics | evaluate-live | evaluate-ocr |
+reread-scans | simulate-rig | validate-volve <dir> | retrain-risk | retrain-classifier"""
 from __future__ import annotations
 
 import argparse
@@ -17,6 +17,10 @@ def main() -> None:
     v.add_argument("folder")
     sub.add_parser("metrics", help="print stored evaluation metrics")
     sub.add_parser("evaluate-live", help="replay the active well: alarm-budget sweep and DTW top-pick accuracy")
+    sub.add_parser("reread-scans", help="OCR the scanned documents that were stored unread because no OCR engine "
+                                        "was installed at ingest time")
+    sub.add_parser("evaluate-ocr", help="re-score scanned-report OCR (e.g. after installing an OCR engine) "
+                                        "without rebuilding the demo")
     bp = sub.add_parser("build-public", help="build a real-data knowledge base from public Sodir FactPages exports "
                                               "(run with NWIS_REGION=norway and a separate NWIS_DATA_DIR)")
     bp.add_argument("--source", default="sodir", choices=["sodir"])
@@ -26,6 +30,9 @@ def main() -> None:
     vv = sub.add_parser("validate-volve", help="score NWIS on the public Equinor Volve DDR XML (download it first)")
     vv.add_argument("folder", help="folder containing Volve drillReport *.xml (searched recursively)")
     vv.add_argument("--limit", type=int, default=None, help="only read this many XML files")
+    sub.add_parser("retrain-risk", help="re-train and re-evaluate the risk model on the current knowledge base")
+    sub.add_parser("retrain-classifier", help="re-fit the sentence classifier with the review-queue verdicts "
+                                              "(approved and rejected sentences)")
     r = sub.add_parser("simulate-rig", help="send the stored active-well stream as real WITS-0 frames over TCP")
     g = r.add_mutually_exclusive_group()
     g.add_argument("--connect", help="host:port of NWIS's WITS-0 listener (NWIS_STREAM=wits0-listen:PORT)")
@@ -78,6 +85,31 @@ def main() -> None:
         start = simulator.start_index_for_md(a.from_md) if a.from_md is not None else 0
         n = simulator.run(a.connect or ("127.0.0.1:5501" if a.listen is None else None), a.listen, a.speed, start, a.limit)
         print(f"sent {n} WITS-0 frames")
+    elif a.cmd == "reread-scans":
+        from .config import MODELS_DIR
+        from .db import DB
+        from .ingest.nlp import SentenceClassifier
+        from .ingest.ocr import get_ocr_engine
+        from .ingest.pipeline import Ingestor
+        if get_ocr_engine() is None:
+            raise SystemExit("no OCR engine installed: pip install -e \"backend[ocr]\"")
+        res = Ingestor(DB(), SentenceClassifier.load(MODELS_DIR / "sentence_clf.joblib")).reread_skipped_scans()
+        for r in res:
+            print(f"{r['title']}: " + (r["error"] if "error" in r else
+                  f"{r['ocr_pages']} OCR page(s), {r['events']} events, {r['lessons']} lessons, {r['review']} for review"))
+        print(f"{len(res)} document(s) re-read")
+    elif a.cmd == "evaluate-ocr":
+        from . import config
+        from .build import evaluate_ocr
+        from .data.synth import generate_world
+        from .db import DB
+        from .ingest.nlp import SentenceClassifier
+        eval_dir = config.DATA_DIR / "eval"
+        eval_dir.mkdir(exist_ok=True)
+        res = evaluate_ocr(DB(), generate_world(config.SEED), SentenceClassifier.load(config.MODELS_DIR / "sentence_clf.joblib"),
+                           eval_dir)
+        if res is None:
+            raise SystemExit("no OCR engine installed: pip install rapidocr onnxruntime (or the [ocr] extra on Python <= 3.12)")
     elif a.cmd == "evaluate-live":
         from .config import MODELS_DIR
         from .kb import KnowledgeBase
@@ -90,6 +122,20 @@ def main() -> None:
         for mode, v in res["top_picks"].items():
             print(f"top picks [{mode}]: MAE {v['mae_m']} m over {v['n']} tops; episodes {v['episodes_detected']}/{v['n_episodes']}")
 
+    elif a.cmd == "retrain-risk":
+        from .db import DB
+        from .risk.model import train_and_evaluate
+        print("[retrain] training the risk model (leave-wells-out evaluation)", flush=True)
+        metrics = train_and_evaluate(DB())
+        print(f"[retrain] pooled AUC: {json.dumps({k: v.get('auc') for k, v in metrics['pooled'].items()})}")
+    elif a.cmd == "retrain-classifier":
+        from .db import DB
+        from .ingest.nlp import retrain_from_reviews
+        try:
+            info = retrain_from_reviews(DB(), log=lambda m: print(f"[retrain] {m}", flush=True))
+        except ValueError as e:
+            raise SystemExit(str(e))
+        print(f"[retrain] reviewed labels used: {info['labels']}")
 
 if __name__ == "__main__":
     main()

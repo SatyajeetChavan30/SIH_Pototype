@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { roleLabel, useAuth, type Role, type User } from "../auth";
 import { useApp } from "../context";
+import JobsCard from "../components/JobsCard";
 import { useTip } from "../components/Tip";
 import { HAZARD_COLOR, HAZARD_SHORT, fmt, riskColor } from "../theme";
 
@@ -30,7 +31,8 @@ export default function Analytics() {
   const [d, setD] = useState<any>(null);
   const [rate, setRate] = useState(18);
   const [avoid, setAvoid] = useState(20);
-  useEffect(() => { api("/api/analytics").then(setD); }, []);
+  const load = () => { api("/api/analytics").then(setD); };
+  useEffect(load, []);
   if (!d) return <div className="empty">Loading analytics…</div>;
   const inv = d.inventory;
   const rm = d.risk_metrics;
@@ -45,6 +47,7 @@ export default function Analytics() {
       <h2 className="view">Analytics &amp; model evidence</h2>
       <p className="lede">How much knowledge NWIS holds, where NPT comes from, and how well each model does. {meta.synthetic ? "All metrics are on the synthetic Upper-Assam dataset: they validate the pipeline mechanics and must be re-measured on OIL's own reports." : `Metrics on real public data: ${meta.ontology.region?.label}. Incidents come from wellbore history summaries, so they are under-reported compared with daily drilling reports.`}</p>
     </div>
+    <JobsCard onFinished={load} />
     <div className="kpis">
       {[["Offset wells", inv.wells], ["Documents", inv.documents], ["Pages read", inv.pages], ["OCR pages", inv.ocr_pages], ["Events extracted", inv.events],
         ["Lessons learned", inv.lessons], ["Citations", inv.citations], ["Awaiting review", inv.review_open]].map(([k, v]) =>
@@ -128,7 +131,8 @@ export default function Analytics() {
         </div>
         {Object.keys(d.audit.by_event).length > 0 && <div className="row wrap small" style={{ gap: 6, marginTop: 8 }}>
           {Object.entries(d.audit.by_event).map(([k, v]) => <span key={k} className="chip">{k.replace(/_/g, " ")} · {String(v)}</span>)}</div>}
-        <div className="small muted" style={{ marginTop: 8 }}>Every alert shown, escalation, acknowledgement (with the person's name), clearance, engineer feedback and alarm-budget change is logged. Editing or deleting any past entry breaks the chain, so post-incident reviews and OISD audits can trust what the console showed and when.</div>
+        <div className="small muted" style={{ marginTop: 8 }}>Every alert shown, escalation, acknowledgement (with the person's name), clearance, engineer feedback, alarm-budget change, review decision and maintenance job is logged. Editing or deleting any past entry breaks the chain, so post-incident reviews and OISD audits can trust what the console showed and when.</div>
+        <AuditBrowser admin={can("admin")} />
       </div>
     <div className="card">
       <h3>Alert feedback from engineers</h3>
@@ -219,6 +223,53 @@ function median(v: number[]): number | null {
   if (!v.length) return null;
   const s = [...v].sort((a, b) => a - b);
   return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+}
+
+/** Browse the decision log (newest first); admins can re-verify the whole hash chain on demand. */
+function AuditBrowser({ admin }: { admin: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [session, setSession] = useState("");
+  const [event, setEvent] = useState("");
+  const [rows, setRows] = useState<any[] | null>(null);
+  const [check, setCheck] = useState<any>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const load = () => {
+    setErr(null);
+    api(`/api/audit?limit=500${session.trim() ? `&session_id=${encodeURIComponent(session.trim())}` : ""}`)
+      .then((r) => setRows(r.rows)).catch((e) => setErr(e.message));
+  };
+  useEffect(() => { if (open) load(); }, [open]);
+  const verify = () => { setCheck(null); api("/api/audit/verify").then(setCheck).catch((e) => setErr(e.message)); };
+  const shown = (rows ?? []).filter((r) => !event || r.event === event);
+  const events = [...new Set((rows ?? []).map((r) => r.event))].sort();
+  return <div style={{ marginTop: 10 }}>
+    <div className="row wrap" style={{ gap: 6 }}>
+      <button className="btn sm" onClick={() => setOpen(!open)}>{open ? "Hide log" : "Browse log"}</button>
+      {admin && <button className="btn sm" onClick={verify}>Verify hash chain</button>}
+      {check && <span className="small" style={{ color: check.ok ? "var(--good-ink)" : "var(--bad-ink)" }}>
+        {check.ok ? `✔ all ${fmt.n0(check.n)} entries verified` : `✖ chain broken at entry #${check.first_bad_seq}`}</span>}
+    </div>
+    {err && <div className="banner small" style={{ marginTop: 6 }}>{err}</div>}
+    {open && <div className="col" style={{ gap: 6, marginTop: 8 }}>
+      <div className="row wrap small" style={{ gap: 6 }}>
+        <input type="text" placeholder="session id (optional)" value={session} onChange={(e) => setSession(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && load()} style={{ width: 200 }} />
+        <button className="btn sm" onClick={load}>Load</button>
+        <select value={event} onChange={(e) => setEvent(e.target.value)}>
+          <option value="">all events</option>{events.map((e) => <option key={e} value={e}>{e.replace(/_/g, " ")}</option>)}
+        </select>
+        <span className="muted">{rows ? `${shown.length} of the latest ${rows.length} entries` : "loading…"}</span>
+      </div>
+      <div className="scroll" style={{ maxHeight: 320 }}>
+        <table className="t"><thead><tr><th className="num">#</th><th>Time</th><th>Event</th><th>Hazard</th><th>Level</th><th>Who</th><th>Well</th><th className="num">MD</th><th>Details</th></tr></thead>
+          <tbody>{shown.map((r) => <tr key={r.seq}><td className="num">{r.seq}</td><td className="small">{String(r.ts_wall).replace("T", " ")}</td>
+            <td>{String(r.event).replace(/_/g, " ")}</td><td>{r.hazard ? HAZARD_SHORT[r.hazard] ?? r.hazard : ""}</td><td>{r.level ?? ""}</td>
+            <td>{r.actor}</td><td>{r.well_id ?? ""}</td><td className="num">{r.md != null ? fmt.n0(r.md) : ""}</td>
+            <td className="small muted" title={JSON.stringify(r.payload)} style={{ maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {Object.entries(r.payload ?? {}).filter(([, v]) => v != null && v !== "").map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`).join(" · ")}</td></tr>)}</tbody></table>
+      </div>
+    </div>}
+  </div>;
 }
 
 /** Admin only: who can sign in, and with which role. */

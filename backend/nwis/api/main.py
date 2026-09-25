@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .. import audit, auth, config
+from .. import audit, auth, config, jobs
 from ..correlation import correlation_panel, default_plan, target_from_well
 from ..db import DB
 from ..domain.ontology import REGION as ONTOLOGY_REGION
@@ -119,6 +119,7 @@ S = State()
 
 @asynccontextmanager
 async def lifespan(_app):
+    jobs.swap_pending_build(config.DATA_DIR)   # a rebuild finished by the dashboard, not yet switched in
     S.load()
     task = None
     if S.ready:  # warm the search + analog indexes in the background
@@ -129,6 +130,8 @@ async def lifespan(_app):
                                             lambda: S._analogs)
             task = asyncio.create_task(S.hub.run())
     yield
+    for j in JOBS.running():   # do not leave orphaned build / simulator processes behind
+        JOBS.cancel(j.id)
     if task is not None:
         task.cancel()
         S.hub.source.stop()
@@ -354,7 +357,7 @@ def recommend_api(hazard: str, formation: str | None = None, well_id: str | None
 def search(q: str, types: str = "event,lesson,passage", limit: int = 25):
     k = kb()
     center = (k.active.lat, k.active.lon) if k.active else None
-    return J(S.index.search(q, tuple(types.split(",")), limit, center))
+    return J(S.index.search(q, tuple(types.split(",")), max(1, min(limit, 500)), center))
 
 
 @app.get("/api/ask")
@@ -439,6 +442,25 @@ async def ingest(file: UploadFile = File(...)):
         shutil.copyfileobj(file.file, f)
     res = await asyncio.to_thread(_ingest_path, dest, "upload")
     return J(res)
+
+
+@app.get("/api/ingest/skipped-scans")
+def skipped_scans():
+    kb()
+    return J({"documents": Ingestor(S.db, S.clf).skipped_scans(), "ocr": ocr_status()})
+
+
+@app.post("/api/ingest/reread-scans")
+async def reread_scans():
+    kb()
+    if not ocr_status()["available"]:
+        raise HTTPException(409, "No OCR engine is installed on the server")
+
+    def run():
+        res = Ingestor(S.db, S.clf).reread_skipped_scans()
+        S.refresh()
+        return res
+    return J({"documents": await asyncio.to_thread(run)})
 
 
 @app.post("/api/ingest/sample")
@@ -641,6 +663,190 @@ def analytics():
               "live_eval": S.db.kv_get("live_eval"), "public_eval": S.db.kv_get("public_eval")})
 
 
+# ---------------------------------------------------------------------------- background jobs (Analytics > Maintenance)
+REGION_HOME = {"assam": "data", "norway": "data_norway"}
+
+
+def _home(region: str) -> Path:
+    """Data folder a build for `region` replaces: the one being served for this region, else the default folder."""
+    return config.DATA_HOME if region == config.REGION else config.ROOT / REGION_HOME[region]
+
+
+def _switch_data(new_dir: Path) -> None:
+    """Serve a rebuilt knowledge base without a restart (the swap into place happens at the next start)."""
+    global S
+    config.set_data_dir(new_dir)
+    s = State()
+    s.load()
+    if s.ready:
+        threading.Thread(target=lambda: (s.index, s.analogs), daemon=True).start()
+    S = s
+
+
+def _build_kind(key: str, region: str, label: str, description: str, argv, params=lambda raw: {}) -> jobs.Kind:
+    def before(job: jobs.Job) -> None:
+        job.workdir = jobs.staged_dir(_home(region))
+        job.workdir.mkdir(parents=True)
+
+    def after(job: jobs.Job) -> dict:
+        live_target = region == config.REGION
+        carried = jobs.finalize_build(job.workdir, config.DATA_DIR if live_target else _home(region))
+        if live_target and S.hub is None:
+            _switch_data(job.workdir)
+            return {"applied": "live", "reload": True, "carried": carried,
+                    "message": "The rebuilt knowledge base is now being served."}
+        how = ("restart NWIS" if live_target else
+               "start NWIS with ./run.sh --public" if region == "norway" else "start NWIS with ./run.sh")
+        return {"applied": "restart", "reload": False, "carried": carried,
+                "message": f"Built. It replaces {_home(region).name} the next time you {how}."}
+
+    def cleanup(job: jobs.Job) -> None:
+        if job.workdir is not None:
+            shutil.rmtree(job.workdir, ignore_errors=True)
+
+    return jobs.Kind(key, label, description, "admin", argv, params=params,
+                     env=lambda p: {"NWIS_REGION": region}, before=before, after=after, cleanup=cleanup)
+
+
+def _sim_params(raw: dict) -> dict:
+    speed = float(raw.get("speed", 60))
+    if not 0 <= speed <= 1000:
+        raise ValueError("speed must be between 0 and 1000")
+    md = raw.get("from_md")
+    md = None if md in (None, "") else float(md)
+    if md is not None and md < 0:
+        raise ValueError("from_md must be positive")
+    return {"speed": speed, "from_md": md}
+
+
+def _public_params(raw: dict) -> dict:
+    q = str(raw.get("quadrants", "15,16")).strip().lower() or "15,16"
+    if q != "all" and not all(x.strip().isdigit() for x in q.split(",")):
+        raise ValueError("quadrants must be comma-separated numbers (e.g. 15,16) or 'all'")
+    return {"quadrants": q, "download": bool(raw.get("download"))}
+
+
+def _sodir_cache() -> Path:
+    return _home("norway") / "public" / "sodir"
+
+
+def _sim_argv(p: dict) -> list[str]:
+    port = config.STREAM.split(":", 1)[1]
+    return ["simulate-rig", "--connect", f"127.0.0.1:{port}", "--speed", str(p["speed"])] + \
+        (["--from-md", str(p["from_md"])] if p["from_md"] is not None else [])
+
+
+def _need_kb() -> str | None:
+    return None if S.ready else "the knowledge base is not built"
+
+
+def _stream_file() -> bool:
+    return (config.LOGS_DIR / "active_stream.npz").exists()
+
+
+def _reload_model(job: jobs.Job) -> dict:
+    S.model = RiskModel.load(config.MODELS_DIR / "risk_model.joblib")
+    return {"message": "Risk model re-trained; new consoles and risk profiles use it."}
+
+
+def _reload_clf(job: jobs.Job) -> dict:
+    S.clf = SentenceClassifier.load(config.MODELS_DIR / "sentence_clf.joblib")
+    return {"message": "Sentence classifier re-fitted; documents ingested from now on use it.",
+            "retrain": S.db.kv_get("classifier_retrain")}
+
+
+JOB_KINDS = {k.key: k for k in [
+    jobs.Kind("evaluate-live", "Re-run live evaluation",
+              "Replays the active well: alarm-budget sweep and automatic top-picking accuracy (a few minutes).",
+              "office", lambda p: ["evaluate-live"],
+              check=lambda: _need_kb() or (None if _stream_file() else "this dataset has no real-time stream to replay")),
+    jobs.Kind("evaluate-ocr", "Re-score OCR",
+              "Scores scanned-report reading on 12 completion reports as text, standard and poor scans (a few minutes).",
+              "office", lambda p: ["evaluate-ocr"],
+              check=lambda: _need_kb() or ("needs the synthetic Assam dataset" if config.REGION != "assam" else
+                                           None if ocr_status()["available"] else "no OCR engine is installed")),
+    jobs.Kind("retrain-risk", "Retrain risk model",
+              "Re-trains the risk model on the current knowledge base, with leave-wells-out evaluation.",
+              "office", lambda p: ["retrain-risk"], check=_need_kb, after=_reload_model),
+    jobs.Kind("retrain-classifier", "Retrain sentence classifier",
+              "Re-fits the document classifier with every approved and rejected review (active learning).",
+              "office", lambda p: ["retrain-classifier"],
+              check=lambda: _need_kb() or (None if S.db.kv_get("verified_sentences") else
+                                           "no reviews yet: approve or reject items in the review queue first"),
+              after=_reload_clf),
+    jobs.Kind("simulate-rig", "Rig simulator",
+              "Sends the stored active-well stream to NWIS's WITS-0 listener as real rig frames.",
+              "office", _sim_argv, params=_sim_params, exclusive=False,
+              check=lambda: (None if config.STREAM.startswith("wits0-listen:") and _stream_file() else
+                             "start NWIS with NWIS_STREAM=wits0-listen:5501 to receive a simulated rig feed")),
+    _build_kind("build-demo", "assam", "Rebuild demo knowledge base",
+                "Regenerates the synthetic Upper-Assam wells, reports and models from scratch (about 2 minutes; about 10 with OCR installed).",
+                lambda p: ["build-demo"]),
+    _build_kind("build-public", "norway", "Build North Sea real-data knowledge base",
+                "Builds from public Sodir FactPages exports (NLOD 2.0); the download needs internet access.",
+                lambda p: ["build-public", "--quadrants", p["quadrants"], "--from-folder", str(_sodir_cache())]
+                + (["--download"] if p["download"] else []), params=_public_params),
+]}
+
+
+def _job_event(job: jobs.Job, event: str) -> None:
+    if not S.ready:
+        return
+    audit.append_many(S.db, [audit.make_row("job", actor=job.actor,
+                                            payload={"job": job.id, "kind": job.kind, "params": job.params,
+                                                     "status": event, "returncode": job.returncode,
+                                                     "error": job.error})])
+
+
+JOBS = jobs.JobManager(JOB_KINDS, on_event=_job_event)
+
+
+@app.get("/api/jobs")
+def jobs_list():
+    return J(JOBS.describe())
+
+
+@app.post("/api/jobs")
+def jobs_start(body: dict, request: Request):
+    kind = JOB_KINDS.get(body.get("kind") or "")
+    if kind is None:
+        raise HTTPException(404, f"unknown job {body.get('kind')!r}")
+    user = getattr(request.state, "user", None)
+    if kind.role == "admin" and auth.enabled() and (user is None or user["role"] != "admin"):
+        raise HTTPException(403, "only an admin can rebuild a knowledge base")
+    if kind.key == "build-public" and not body.get("params", {}).get("download") \
+            and not all((_sodir_cache() / f"{t}.csv").exists() for t in _sodir_tables()):
+        raise HTTPException(400, f"no cached Sodir exports in {_sodir_cache()}: tick 'download' (needs internet)")
+    try:
+        job = JOBS.start(kind.key, body.get("params"), _actor(request, body.get("actor"), default="dashboard"))
+    except jobs.JobBusy as e:
+        raise HTTPException(409, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return J(job.to_dict())
+
+
+def _sodir_tables() -> tuple[str, ...]:
+    from ..public.sodir import TABLES
+    return tuple(TABLES)
+
+
+@app.get("/api/jobs/{job_id}")
+def jobs_get(job_id: str, tail: int = 200):
+    job = JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "no such job")
+    return J(job.to_dict(tail=max(0, min(tail, jobs.MAX_LINES))))
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+def jobs_cancel(job_id: str):
+    job = JOBS.cancel(job_id)
+    if job is None:
+        raise HTTPException(404, "no such job")
+    return J(job.to_dict(tail=0))
+
+
 # ---------------------------------------------------------------------------- live (eRTMAC stream)
 @app.websocket("/ws/live")
 async def live(ws: WebSocket):
@@ -677,7 +883,10 @@ async def live(ws: WebSocket):
     def send(msg: dict):
         return ws.send_text(json.dumps(_clean(msg), default=_json_default))
 
-    await send(init_payload(session, _well_summary(S.kb.active), S.kb.active.sections))
+    try:
+        await send(init_payload(session, _well_summary(S.kb.active), S.kb.active.sections))
+    except (WebSocketDisconnect, RuntimeError):   # the page was closed or reloaded while the session was being set up
+        return
 
     async def reader():
         while True:

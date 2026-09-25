@@ -172,5 +172,5 @@ ul.brief-list { margin: 0; padding-left: 18px; line-height: 1.6; }
 .login label { display: flex; flex-direction: column; gap: 4px; }
 .login-demo { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 4px; }
 .tag.user { gap: 8px; }
-@media (max-width: 1500px) { .topbar .brand small, .topbar .tag.llm { display: none; } }
+@media (max-width: 1500px) { .topbar .brand small, .topbar .tag.llm, .topbar .btn.upload span { display: none; } }
 .linkbtn { background: none; border: 0; padding: 0; color: var(--info-ink); cursor: pointer; font-size: inherit; text-decoration: underline; }

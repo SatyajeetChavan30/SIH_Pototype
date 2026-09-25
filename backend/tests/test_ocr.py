@@ -44,7 +44,9 @@ def test_cementing_sentence_is_placed_at_the_named_casing_shoe():
 
 def test_full_width_lines_survive_ocr(tmp_path):
     """RapidOCR's angle classifier used to flip long lines to 180 degrees and return nothing for them."""
-    pytest.importorskip("rapidocr_onnxruntime")
+    from nwis.ingest.ocr import get_ocr_engine
+    if not getattr(get_ocr_engine(), "name", "").startswith("rapidocr"):   # either rapidocr-onnxruntime 1.x or rapidocr 3.x
+        pytest.skip("RapidOCR not installed")
     from nwis.data import docs_gen
     from nwis.ingest.pdf import extract_pages
 
@@ -64,3 +66,37 @@ def test_full_width_lines_survive_ocr(tmp_path):
     assert "torque spikes observed while drilling at 2,853 m" in text
     assert "Torque normalised" in text                       # word spaces kept
     assert "3,211 m in Barail" in text
+
+
+def test_scans_stored_without_ocr_can_be_reread_later(tmp_path, monkeypatch):
+    """A scan ingested before OCR was installed is flagged, listed, and read properly once OCR is available."""
+    from nwis.ingest import pdf as pdfmod
+    from nwis.ingest.ocr import get_ocr_engine
+    if not getattr(get_ocr_engine(), "name", "").startswith("rapidocr"):
+        pytest.skip("RapidOCR not installed")
+    from nwis.data import docs_gen
+    from nwis.db import DB
+    from nwis.ingest.pipeline import Ingestor
+
+    w = docs_gen.PdfWriter(fontsize=8.6)
+    w.new_page()
+    w.line("WELL COMPLETION REPORT    Well: NDH-99", bold=True)
+    w.line("4. DRILLING COMPLICATIONS", bold=True)
+    w.line("- Total losses encountered at 2,308 m MD in Tipam Sandstone. Pumped coarse LCM pill; losses cured.")
+    src, scan = tmp_path / "t.pdf", tmp_path / "NDH-99_WCR_scan.pdf"
+    w.save(src)
+    docs_gen.rasterize_pdf(src, scan, seed=3)
+    db = DB(tmp_path / "t.db")
+    db.init()
+    ing = Ingestor(db)
+
+    monkeypatch.setattr(pdfmod, "get_ocr_engine", lambda: None)      # as if OCR were not installed yet
+    first = ing.ingest_pdf(scan, title="NDH-99 WCR (scanned)")
+    assert first["events"] == [] and first["pages"][0]["needs_ocr"]
+    assert [d["title"] for d in ing.skipped_scans()] == ["NDH-99 WCR (scanned)"]
+
+    monkeypatch.undo()
+    res = ing.reread_skipped_scans()
+    assert len(res) == 1 and res[0]["ocr_pages"] == 1 and res[0]["events"] >= 1
+    assert ing.skipped_scans() == []                                   # nothing left unread
+    assert "Tipam" in db.one("SELECT text FROM pages WHERE doc_id=?", (res[0]["doc_id"],))["text"]

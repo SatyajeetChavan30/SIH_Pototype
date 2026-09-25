@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,6 +24,7 @@ from .pdf import PageText, extract_pages
 
 RIBBON_EVENT_HAZARDS = ("LOSS", "KICK", "STUCK", "TIGHT", "INSTAB", "TORQUE", "CEMENT", "FISH")
 MERGE_TOL_M = 40.0
+NO_OCR_MARKER = "no OCR engine is installed"   # in a document's warnings: a scanned page was stored unread
 
 
 # ---------------------------------------------------------------------------
@@ -307,7 +309,8 @@ def extract_document(pages: list[PageText], clf: SentenceClassifier | None, ctx_
         page_meta.append({"page": p.page_no, "chars": len(p.text), "ocr": p.ocr, "ocr_conf": p.ocr_conf,
                           "needs_ocr": p.needs_ocr})
         if p.needs_ocr:
-            warnings.append(f"Page {p.page_no} is scanned and no OCR engine is installed (pip install rapidocr-onnxruntime).")
+            warnings.append(f"Page {p.page_no} is scanned and {NO_OCR_MARKER} (pip install -e \"backend[ocr]\"), "
+                            "so it was stored unread. Re-read it from Ingestion once OCR is installed.")
             continue
         text = repair_ocr_spacing(ocr_fix_numbers(p.text)) if p.ocr else p.text
         if p.ocr:
@@ -578,6 +581,34 @@ class Ingestor:
     def ingest_pdf(self, path: Path, kind_hint: str | None = None, title: str | None = None,
                    well_hint: str | None = None, source: str = "corpus") -> dict:
         return self._ingest_pages(path, extract_pages(path), kind_hint, title, well_hint, source)
+
+    def skipped_scans(self) -> list[dict]:
+        """Documents with scanned pages that were stored unread because no OCR engine was installed."""
+        out = []
+        for d in self.db.query("SELECT id, well_id, kind, title, path, pages, meta FROM documents WHERE meta LIKE ?",
+                               (f"%{NO_OCR_MARKER}%",)):
+            meta = json.loads(d.pop("meta") or "{}")
+            d["source"] = meta.get("source", "corpus")
+            d["file_exists"] = Path(d["path"]).exists()
+            out.append(d)
+        return out
+
+    def reread_skipped_scans(self) -> list[dict]:
+        """Re-ingest every skipped scan through OCR. Needs an OCR engine; documents whose file is gone are skipped."""
+        from .ocr import get_ocr_engine
+        if get_ocr_engine() is None:
+            raise RuntimeError("no OCR engine installed")
+        out = []
+        for d in self.skipped_scans():
+            if not d["file_exists"]:
+                out.append({"doc_id": d["id"], "title": d["title"], "error": "file not found"})
+                continue
+            res = self.ingest_pdf(Path(d["path"]), kind_hint=d["kind"], title=d["title"],
+                                  well_hint=d["well_id"], source=d["source"])
+            out.append({"doc_id": res["doc_id"], "title": d["title"], "well_id": res["well_id"],
+                        "ocr_pages": sum(1 for pg in res["pages"] if pg["ocr"]), "events": len(res["events"]),
+                        "lessons": len(res["lessons"]), "review": len(res["review"]), "warnings": res["warnings"]})
+        return out
 
     def ingest_witsml(self, path: Path, title: str | None = None, source: str = "upload") -> dict:
         from .witsml import load_witsml_pages

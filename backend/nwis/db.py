@@ -75,6 +75,13 @@ class DB:
             self._local.conn = c
         return c
 
+    def close(self) -> None:
+        """Close this thread's connection (so the database folder can be moved)."""
+        c = getattr(self._local, "conn", None)
+        if c is not None:
+            c.close()
+            self._local.conn = None
+
     def init(self) -> None:
         self.conn.executescript(SCHEMA)
         self.conn.commit()
