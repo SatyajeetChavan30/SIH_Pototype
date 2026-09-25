@@ -5,7 +5,7 @@ SIH 2026 · Problem Statement 26121 · Oil India Limited · Smart Automation
 
 > **In one line:** NWIS reads every DDR, WCR and legacy scan, turns them into cited events, and projects the offset wells' problems onto the active well **by formation, not measured depth**. Engineers get a warning ~150 m ahead, with the source page, and a ranked list of what actually worked last time.
 
-See [`RESEARCH.md`](RESEARCH.md) for the market and literature analysis that drove these choices.
+See [`RESEARCH.md`](RESEARCH.md) for the market and literature analysis that drove these choices, and [`VISION.md`](VISION.md) for the end state this prototype is building towards.
 
 ---
 
@@ -97,6 +97,7 @@ Baselines are robust rolling medians. They reset after a mud-weight change or a 
 ### 3.6 "What worked" recommendations and Analog Replay
 - **Mitigation ranking:** mitigations are ranked by *outcome*, not habit. The measures are Laplace-smoothed cure rate, first-try success and median NPT, over offset events in the same formation, widening to the basin when evidence is thin.
 - **What the data rediscovers:** fine LCM fails in fractured Sylhet (1/11) while cement plugs work (2/2). Sized CaCO₃ works in depleted Tipam.
+- **Case-mix adjustment:** raw cure rates are confounded, because cement plugs go on total losses and on cases where other treatments already failed. Each action is therefore ranked by an **indirectly standardised** cure rate: what it achieved compared with what an average treatment achieved on cases of the same severity and attempt order, shrunk toward the overall rate when attempts are few. Two lucky attempts cannot claim a 97% cure rate, and a ⚖ marks actions whose raw and adjusted rates differ a lot.
 - **Analog Replay:** a modern, fully automatic take on case-based reasoning. Every 30 m window of every offset log is a case. The live window is matched by kNN, and NWIS shows **what happened next** (≤60 m), with sources.
 
 ### 3.7 Evidence-grounded document understanding
@@ -121,6 +122,37 @@ The Offset Hazard Brief uses the same zones, window and recommendations that arm
 - Integrates through a stream-source adapter next to eRTMAC; no rip-and-replace.
 - Separate rig-site and RTOC views.
 
+### 3.11 Alarm budget: physics baselines and conformal calibration
+- **Physics baselines.** Expected standpipe pressure, ECD, hookload and torque come from simplified hydraulics and soft-string torque-and-drag. They use depth, inclination, mud weight and flow rate, and the friction-factor-like coefficients are calibrated online on quiet drilling. Unlike rolling medians, the expectation follows depth and responds immediately to a mud-weight change. Live Ops draws it as a dashed "physics expected" line.
+- **Conformal p-values.** Each detector keeps a reservoir of its own recent normal scores, averaged over its persistence window. A sample only joins the reservoir after about 2.5 h, and only if no alert followed, so the run-up to a real problem is never learnt as normal. Every alert shows its p-value.
+- **Budget, ISA-18.2 style.** The RTOC sets how many non-critical alerts per hour it can act on (0.5, 1, 2 or 4).
+  - Critical alerts, and alerts corroborated by an offset look-ahead zone, always show.
+  - Over budget, weaker signals are held in a visible **digest** and logged. Nothing is silently dropped.
+
+### 3.12 Automatic formation-top picking (DTW)
+- **Method.** For the next formation, each nearby offset provides a template: its smoothed gamma-ray from 80 m above to 40 m below its top.
+  - Open-begin/open-end dynamic time warping maps the offset's top onto the live GR log.
+  - A pick needs at least 3 offsets to agree within 15 m, the pick must lie inside the ±2σ prognosis, and the GR must step across it the same way as in the offsets.
+- **Modes.** `NWIS_TOP_PICK=auto` (default) keeps the mud-logger pick in charge and runs DTW as an independent QC; a disagreement above 15 m raises a *correlation conflict* note. `dtw` re-anchors on DTW alone; `mudlogger` switches it off.
+
+### 3.13 Decision black box
+Every alert opening, escalation, acknowledgement (with the person's name), clearance, engineer verdict (useful, false alarm, or real but not actionable), digest hold and budget change goes to an append-only `decision_log`. Each row stores the SHA-256 of the previous hash plus its own content, so editing or deleting any past row breaks verification. The alert drawer shows the trail for that alert, and Analytics shows chain status. This answers the question every post-incident review asks: what did the console show, when, and who acted?
+
+### 3.14 What-if planner
+Planners edit mud weight, ECD or casing-shoe depth per section and the offset models re-run on a copy of the plan. The planner reports formation-level risk deltas and the mud-window findings, and draws the scenario on the MW-window chart. It says plainly that offset-evidence probabilities do not depend on planned mud weight: only the ML layer and the window checks move.
+
+### 3.15 Institutional memory: expert memos, after-action reviews, shift handover
+- **Expert memos.** Senior engineers type a memo or record it as a voice note in Assamese, Hindi or English.
+  - Voice is transcribed on-prem through the optional `nwis[asr]` extra, which uses faster-whisper.
+  - The memo runs through the same NLP and is credited to its author. **Everything from a memo goes to peer review** before it can influence alerts or rankings.
+- **After-action reviews.** Any event in Knowledge search can produce a cited review. It covers what happened, a timeline from the report pages, the actions and outcomes, what the case-mix-adjusted offset evidence says, and similar events. An engineer approves it into a first-class lesson.
+- **Shift handover.** One click in Live Ops produces a cited brief of the last 12 h:
+  - progress and top picks
+  - the alerts and how they were handled
+  - open items
+  - hazard zones in the next 300 m, with what worked
+- **Grounding.** Both documents are extractive. The optional on-prem LLM may only rephrase them under the citation guard.
+
 ## 4. Measured results (synthetic Upper-Assam dataset, reproducible)
 
 `python -m nwis.cli build-demo` generates the data. It is deterministic (seed 26121) and takes about 2.5 minutes. It produces **59 offset wells, 118 PDFs (4 scanned), 2,100+ pages, 133 extracted events, 119 lessons, and 1,100+ citations**.
@@ -138,10 +170,13 @@ The Offset Hazard Brief uses the same zones, window and recommendations that arm
 | Live replay of NDH-21 | Hidden hazards detected | **4 / 4** |
 | | …preceded by a formation-aligned look-ahead ~150 m earlier | 3 / 4 (Tipam losses, Barail kick, Sylhet losses) |
 | | Overpressure early warning (dxc + gas) | Fires about 50 m before the kick |
+| Alarm budget, nuisance stress replay (pit transfers, flow surges, gas and stick-slip bursts injected; 114 h) | False alarms, no budget → budget 1/h | **14 → 9**, still **4 / 4** hazards detected; 0 false alarms on the clean stream |
+| DTW top picking, no mud-logger picks | Median / mean / worst error vs hidden tops (4 tops) | **8 m** / 17 m / 49 m (Tipam, fooled by a sand streak in the Girujan clay); still **4 / 4** hazards detected |
+| Case-mix-adjusted mitigation ranking | Toy case with severity confounding (unit test) | Adjustment removes more than half of the raw bias |
 
 **Honesty note:** these numbers validate the *pipeline mechanics* on synthetic data with known ground truth, which is why they can be measured at all. They are not field performance. The first pilot step is to re-measure them on OIL's own DDR/WCR archive (§7).
 
-`pytest` (21 tests) enforces these claims, as well as unit parsing, negation, minimum curvature, WITS-0 and WITSML parsing, and the API/WebSocket surface.
+`pytest` (34 tests) enforces these claims, as well as unit parsing, negation, minimum curvature, WITS-0 and WITSML parsing, the API/WebSocket surface, decision-log tamper detection, conformal false-alarm rates, physics baselines, DTW alignment, what-if isolation, memo peer review, after-action reviews and the handover brief. The live-alerting numbers come from `python -m nwis.cli evaluate-live`, which `build-demo` also runs.
 
 ## 5. Seven-minute demo script (for judges)
 
@@ -159,6 +194,15 @@ The Offset Hazard Brief uses the same zones, window and recommendations that arm
    - It shows negation and hypothetical sentences being ignored, and two events auto-accepted.
    - Then load the *Scanned legacy WCR* to show OCR.
 8. **Analytics (20 s).** Show AUC against the baselines and extraction F1, and close with the value calculator.
+9. **Vision features (2 min, if time allows).**
+   - **Live Ops:**
+     - Point at the dashed *physics expected* lines.
+     - Switch the alarm budget to 0.5/h and show the *Held in digest* card.
+     - Acknowledge the S1 alert and show the **decision log** in the drawer.
+     - Click **Handover brief**.
+   - **Risk & Planning:** in the what-if planner, drop the 12¼″ ECD to 10.0 ppg and show Tipam loss risk falling by about 8 points.
+   - **Knowledge:** open **After-action review** on a Sylhet loss.
+   - **Ingestion:** submit an expert memo and approve it from the review queue.
 
 ## 6. Feasibility and deployment at OIL
 
@@ -173,11 +217,13 @@ The Offset Hazard Brief uses the same zones, window and recommendations that arm
 
 ## 7. Roadmap after SIH
 
+The staged path to full deployment, with exit criteria and target metrics, is in [`VISION.md` §8](VISION.md#8-staged-path-to-the-end-goal).
+
 1. **Pilot on real data:** ingest 3–5 years of OIL DDR/WCR for one field. Re-measure extraction F1 and risk AUC, and calibrate detector thresholds with RTOC feedback.
-2. **Automatic top correlation:** DTW (dynamic time warping) on gamma-ray/ROP to re-anchor formation tops while drilling. Today, re-anchoring uses the mud logger's top picks.
-3. **Physics baselines:** torque-and-drag and hydraulics models for the expected hookload, torque and ECD, replacing the rolling baselines.
-4. **On-prem LLM assistant:** Ollama with a citation guard (hook implemented) for shift-handover summaries.
-5. **Production data layer:** PostGIS, SSO/LDAP, audit log, and a mobile rig-site client.
+2. **Top correlation on real LWD:** DTW picking is built (§3.12). Next, tune it on OIL's gamma-ray logs, add ROP and resistivity as extra channels, and use it to catch sand-streak mis-picks before trusting `dtw` mode.
+3. **Full physics models:** replace the simplified hydraulics and soft-string baselines (§3.11) with calibrated stiff-string torque-and-drag and transient hydraulics (OpenLab-class).
+4. **On-prem LLM assistant:** Ollama with the citation guard rephrasing the extractive handover and after-action reviews (§3.15). Both already work without it.
+5. **Production data layer:** PostGIS, SSO/LDAP, an off-server copy of the decision-log hash head, and a mobile rig-site client.
 6. **Closed-loop learning:** every new DDR of the active well is ingested daily, so today's well becomes tomorrow's offset.
 
 ## 8. Known limitations (stated up-front)
@@ -185,3 +231,7 @@ The Offset Hazard Brief uses the same zones, window and recommendations that arm
 - The demo data is synthetic, though calibrated to published Assam geology. Metrics are about mechanism, not field accuracy.
 - OCR on heavily degraded scans is partial. The design compensates with the review queue and cross-document consolidation.
 - The stuck-pipe ML model underperforms the base rate in cross-validation (0.68 vs 0.78 AUC). The blend therefore gives it weight 0, so stuck-pipe risk comes from offset evidence and the real-time risk index.
+- The alarm budget only trims non-critical alerts. Most remaining nuisance false alarms in the stress test are critical-level pit-transfer "losses", which it deliberately never hides. A pit-transfer flag from the rig would remove them.
+- DTW picked the Tipam top 49 m early because a sand streak sits inside the Girujan clay. That is why the default mode uses DTW as a QC beside the mud logger and not as the sole source.
+- Narrative, first-person memos rarely yield structured events. They are captured as attributed lesson candidates for peer review.
+- Voice memos need the optional speech model installed and its weights cached on the server. Out-of-the-box Whisper accuracy on Assamese is limited.

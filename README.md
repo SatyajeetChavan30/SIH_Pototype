@@ -15,11 +15,12 @@ NWIS turns decades of DDRs, WCRs and scanned reports into **cited, structured dr
 | Offset comparison | by MD / TVD | **by formation**: tops interpolated with ±σ and re-anchored live as tops are picked |
 | Risk | score, no uncertainty | **probability, 90% credible interval and evidence count** (Beta-Binomial) plus an ML model; beats "look at the nearest well" (AUC 0.89 vs 0.59) |
 | Mud weight | fixed program | **offset-derived, depletion-aware MW/ECD window**: P(loss\|ECD), P(kick\|MW) |
-| Alerts | "something is wrong" | **fused and corroborated**: the source page, what worked last time (cure rates) and analog situations |
-| Legacy knowledge | digital data only | **NLP + OCR** over DDR/WCR PDFs and scans, with negation, units, citations and a review queue |
+| Alerts | "something is wrong" | **fused and corroborated**: the source page, what worked last time (case-mix-adjusted cure rates) and analog situations; physics-expected baselines; an RTOC-set **alarm budget** with a visible digest |
+| Accountability | none | **decision black box**: hash-chained log of every alert shown, who acknowledged it and what they said |
+| Legacy knowledge | digital data only | **NLP + OCR** over DDR/WCR PDFs and scans, with negation, units, citations and a review queue; **expert memos** (typed or voice), **after-action reviews** and cited **shift handovers** |
 | Deployment | cloud SaaS / licences | **on-prem, air-gapped, open source**; WITS-0 and WITSML adapters for eRTMAC |
 
-Full rationale: [`docs/RESEARCH.md`](docs/RESEARCH.md) (market and literature) · [`docs/SOLUTION.md`](docs/SOLUTION.md) (design, metrics, demo script, roadmap).
+Full rationale: [`docs/VISION.md`](docs/VISION.md) (end goal, success metrics, staged path) · [`docs/RESEARCH.md`](docs/RESEARCH.md) (market and literature) · [`docs/SOLUTION.md`](docs/SOLUTION.md) (design, metrics, demo script, roadmap).
 
 ## Quick start
 
@@ -49,6 +50,18 @@ Import real WITSML drillReport XML (e.g. the public Equinor Volve DDRs):
 cd backend && python -m nwis.cli import-volve /path/to/volve/Well_technical_data/Daily_Drilling_Report_XML
 ```
 
+Re-run the live-alerting evaluation (alarm-budget sweep and DTW top-pick accuracy; `build-demo` already does this):
+```bash
+cd backend && python -m nwis.cli evaluate-live
+```
+
+Optional on-prem speech-to-text for voice memos (Assamese, Hindi, English). Cache the Whisper model on the server for offline use:
+```bash
+pip install -e "backend[asr]"
+```
+
+Formation-top picking mode: `NWIS_TOP_PICK=auto` (default: mud logger plus DTW QC), `dtw` or `mudlogger`.
+
 Optional on-prem LLM phrasing, off by default. It is citation-guarded, and answers stay grounded without it:
 ```bash
 NWIS_LLM=ollama OLLAMA_MODEL=llama3.1:8b python -m nwis.cli serve
@@ -58,13 +71,13 @@ NWIS_LLM=ollama OLLAMA_MODEL=llama3.1:8b python -m nwis.cli serve
 
 | View | What to show |
 |---|---|
-| **Live Ops** | Replay of the active well NDH-21's eRTMAC stream. "Jump to" S1–S4 scenarios. Fused alert feed, look-ahead ribbon, evidence drawer with citations, rig-site view. |
+| **Live Ops** | Replay of the active well NDH-21's eRTMAC stream. "Jump to" S1–S4 scenarios. Fused alert feed with p-values, look-ahead ribbon, physics-expected lines, alarm budget and digest, evidence drawer with citations and decision log, DTW top-pick QC, shift-handover brief, rig-site view. |
 | **Offset Map** | Wells within a user-defined radius, coloured by dominant hazard. Click anywhere to assess a planned location. |
 | **Correlation** | Offset logs side by side; flatten on a formation top and the Tipam thief sand lines up. |
-| **Risk & Planning** | Depth × hazard risk with CIs, headline zones, MW window vs plan, printable Offset Hazard Brief. |
-| **Knowledge** | Search with auto-parsed filters, "Ask NWIS" with numbered citations, knowledge graph (what cured what). |
-| **Ingestion** | Upload PDF/XML or use a sample. Sentence-level NLP trace, extracted events, human review queue. |
-| **Analytics** | Model skill vs baselines, extraction F1, NPT Pareto, calibration, what-if value. |
+| **Risk & Planning** | Depth × hazard risk with CIs, headline zones, MW window vs plan, **what-if planner** (MW / ECD / casing points), printable Offset Hazard Brief. |
+| **Knowledge** | Search with auto-parsed filters, "Ask NWIS" with numbered citations, knowledge graph (what cured what), **after-action review** on any event. |
+| **Ingestion** | Upload PDF/XML or use a sample. Sentence-level NLP trace, extracted events, human review queue, **expert memo** capture with peer review. |
+| **Analytics** | Model skill vs baselines, extraction F1, NPT Pareto, calibration, what-if value, alarm-budget trade-off, DTW top-pick accuracy, decision-log verification. |
 
 <details><summary>More screenshots</summary>
 
@@ -84,14 +97,15 @@ backend/nwis/
   data/                   synthetic Upper-Assam world, DDR/WCR PDF renderer, drilling logs + active-well stream
   ingest/                 PDF/OCR, NLP extraction, pipeline + review queue, WITSML + WITS-0, evaluation
   correlation.py          IDW tops, formation-relative projection, correlation panel
-  risk/                   Beta-Binomial ribbon + zones, HistGB model (leave-wells-out), MW window, recommendations
+  risk/                   Beta-Binomial ribbon + zones, HistGB model (leave-wells-out), MW window, case-mix-adjusted recommendations, what-if
   search/                 query parser, BM25 + LSA + RRF index, Ask NWIS
-  realtime/               detectors, alert fusion, analog replay, live session engine
+  realtime/               detectors, physics baselines, conformal alarm budget, DTW top picking, alert fusion, analog replay, live engine, replay evaluation
   kg.py report.py llm.py  knowledge graph, Offset Hazard Brief, optional Ollama with citation guard
+  memory.py audit.py      shift handover + after-action reviews; hash-chained decision log
   api/main.py             FastAPI REST + /ws/live WebSocket, serves the UI
-backend/tests/            21 tests (NLP, geometry, parsers, model claims, live replay, API)
+backend/tests/            34 tests (NLP, geometry, parsers, model claims, live replay, API, vision features)
 frontend/src/             React + TypeScript views and components
-docs/                     RESEARCH.md, SOLUTION.md, screenshots
+docs/                     VISION.md, RESEARCH.md, SOLUTION.md, screenshots
 ```
 
 ## Tests

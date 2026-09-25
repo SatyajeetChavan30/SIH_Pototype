@@ -31,6 +31,10 @@ OIL's **eRTMAC** (enhanced Real-Time Monitoring & Analytics Centre) already stre
 | **DrillEdge (Verdande → Halliburton)** [14][15] | Case-based reasoning: matches live data to historical "cases" and suggests known mitigations | Cases must be **built by hand by experts**, and the method is not tied to formation or geology. Tests showed strong results on stuck pipe but only "modest" ones on lost circulation [15]. |
 | **Corva** [16] | Real-time apps; parameter overlay from an offset well; BHA benchmarking; offset visualisation | Offset **performance** benchmarking (ROP, BHA, cost) rather than hazard knowledge. US-shale focus, SaaS. |
 | **Exebenus Spotter / Pulse on Kongsberg SiteCom** [17] | ML agents for stuck pipe, washout, losses and hole cleaning. Claims >96% of stuck-pipe incidents pre-warned across 1,400+ wells | Black-box alerts, sensor data only (no document knowledge), commercial licence plus SiteCom dependency. |
+| **SLB Lumi / Tela agentic assistant for offset wells** (2025) [39] | Turns structured and unstructured offset-well data into risks, lessons learned and design insights | SLB platform and licence. No published method for formation alignment, uncertainty or page-level citation. |
+| **ADNOC + SLB DrillOps RTOC** (120+ rigs, 2026) [40] | Reports 30–40% less engineering effort, 2–3× rigs per engineer, 4–12 h faster incident response. Hosted in ADNOC's sovereign cloud | Shows the value of an AI-assisted RTOC and of sovereign hosting, but is a vendor platform. |
+| **DeepIQ** and **Kwantis ID3** [41] | DeepIQ: knowledge-graph assistant for comparable wells, hazards and mitigations (OMV). Kwantis: LLM-assisted DDR capture and IADC coding | Customer-cloud deployments. Not focused on live, formation-aligned hazard foresight. |
+| **DrillScribe** (DDR NPT research prototype) [42] | Shows DDR models barely transfer between operators (AUC 0.69 blind) but recover most of the gain with about 60 local labelled report-days | NPT ledger only; no map, look-ahead or live alerts. Its transfer finding shapes our pilot plan. |
 | **Another SIH team: "OffsetEye"** (same PS) [18] | Map, OCR/NLP extraction, pgvector semantic search, rule-based depth/formation alerts, citations | Its MVP **defers** trajectory correlation, fishing operations, ML risk scoring and real eRTMAC integration [18]. Alerts are deterministic MD/formation rules, with no uncertainty, mud-weight window or analog outcomes. |
 
 **Common gaps across the market:**
@@ -115,3 +119,9 @@ Every synthetic record is labelled **SYNTHETIC** in the UI and documents. Well n
 36. Knowledge-graph-enhanced RAG for FMEA. https://arxiv.org/pdf/2406.18114
 37. TADI: Tool-Augmented Drilling Intelligence via Agentic LLM Orchestration over Heterogeneous Wellsite Data (2026). https://arxiv.org/html/2605.00060v1
 38. Volve WITSML/DDR exploration notes. https://github.com/f0nzie/volve-drilling/blob/master/notebooks/witsml-howto.md
+39. SLB — Tela agentic-AI assistant for offset wells insights. https://www.slb.com/products-and-services/delivering-digital-at-scale/artificial-intelligence-solutions/innovation-factori/tailored-solutions/tela-agentic-ai-assistant-for-offset-wells-insights
+40. World Oil (Aug 2026) — ADNOC, SLB deploy AI platform across more than 120 drilling rigs. https://www.worldoil.com/news/2026/8/4/adnoc-slb-deploy-ai-platform-across-more-than-120-drilling-rigs/
+41. Drilling Contractor — Generative and agentic AI solutions unlock new insights for drilling. https://drillingcontractor.org/generative-and-agentic-ai-solutions-unlock-new-insights-for-drilling-78837
+42. DrillScribe — DDR-to-NPT ledger and cross-operator transfer study. https://github.com/chinmoypaul8897/drillscribe
+
+For the end-state vision built on this research, see [`VISION.md`](VISION.md).
