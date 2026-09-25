@@ -12,6 +12,7 @@ import numpy as np
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_score
 from sklearn.model_selection import GroupKFold
+from threadpoolctl import threadpool_limits
 
 from .. import config
 from ..correlation import target_from_well
@@ -64,6 +65,12 @@ class RiskModel:
         self.blend_w = blend_w or {}
 
     def annotate(self, bins, target, offsets, kb) -> None:
+        # Hundreds of tiny predict calls: OpenMP fan-out costs more than it saves, and from a server worker
+        # thread it made /api/risk/profile ~13x slower (8 s vs 0.6 s). One thread per call is fastest here.
+        with threadpool_limits(1, user_api="openmp"):
+            self._annotate(bins, target, offsets, kb)
+
+    def _annotate(self, bins, target, offsets, kb) -> None:
         cache: dict = {}
         for hz, m in self.models.items():
             X = featurize(bins, target, offsets, kb, hz, cache)
