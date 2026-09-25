@@ -14,7 +14,7 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression
 
 from ..correlation import Target
-from ..domain.ontology import FORMATION_ORDER
+from ..domain.ontology import BOTTOM, FORMATION_ORDER, SURFACE
 from ..kb import KnowledgeBase
 from .evidence import build_offsets
 
@@ -62,7 +62,7 @@ def _crossing(curve: np.ndarray, level: float, increasing: bool) -> float | None
 
 def mw_window(kb: KnowledgeBase, target: Target, radius_km: float = 10.0, formations: list[str] | None = None) -> dict:
     offsets = build_offsets(kb, target, radius_km)
-    formations = formations or [c for c in FORMATION_ORDER if c not in ("ALLUVIUM", "BASEMENT")]
+    formations = formations or [c for c in FORMATION_ORDER if c not in (SURFACE, BOTTOM)]
     out = {}
     for fm in formations:
         rows = []

@@ -10,7 +10,7 @@ import { getActor } from "../live";
 import type { Brief } from "../types";
 import { HAZARD_COLOR, HAZARD_SHORT, fmt } from "../theme";
 
-const EXAMPLES = [
+const FALLBACK_EXAMPLES = [
   "losses in Tipam within 5 km after 2012",
   "what worked for losses in fractured Sylhet limestone",
   "kick in lower Barail below 3000 m",
@@ -63,6 +63,8 @@ export default function Knowledge() {
 
 function Search({ initial }: { initial?: string }) {
   const { openCitation, fmName } = useApp();
+  const { meta } = useApp();
+  const EXAMPLES = meta.ontology.region?.search_examples ?? FALLBACK_EXAMPLES;
   const [q, setQ] = useState(initial ?? EXAMPLES[0]);
   const [types, setTypes] = useState(["event", "lesson", "passage"]);
   const [res, setRes] = useState<any>(null);
@@ -75,7 +77,7 @@ function Search({ initial }: { initial?: string }) {
   useEffect(() => { run(); }, [types]);
   return <div className="col">
     <form className="row" onSubmit={(e) => { e.preventDefault(); run(); }}>
-      <input type="text" value={q} onChange={(e) => setQ(e.target.value)} style={{ flex: 1 }} placeholder="e.g. losses in Tipam within 5 km after 2012" aria-label="Search query" />
+      <input type="text" value={q} onChange={(e) => setQ(e.target.value)} style={{ flex: 1 }} placeholder={`e.g. ${EXAMPLES[0]}`} aria-label="Search query" />
       <button className="btn primary" disabled={busy}>{busy ? "…" : "Search"}</button>
     </form>
     <div className="row wrap small" style={{ gap: 6 }}>
@@ -149,7 +151,8 @@ function AarModal({ eventId, onClose }: { eventId: string; onClose: () => void }
 
 function Ask() {
   const { openCitation } = useApp();
-  const [q, setQ] = useState("What problems did offsets within 5 km have in Tipam, and what worked?");
+  const { meta } = useApp();
+  const [q, setQ] = useState(meta.ontology.region?.ask_default ?? "What problems did offsets within 5 km have, and what worked?");
   const [res, setRes] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const run = async () => { setBusy(true); try { setRes(await api(`/api/ask?${qs({ q })}`)); } finally { setBusy(false); } };
@@ -166,7 +169,7 @@ function Ask() {
       <button className="btn primary" disabled={busy}>{busy ? "…" : "Ask"}</button>
     </form>
     <div className="row wrap small" style={{ gap: 6 }}>
-      {["Kicks in Barail within 8 km — what MW did offsets need?", "What worked for losses in Sylhet?", "Bit balling in Girujan clay after 2010", "Stuck pipe in Tipam near NDH-09"].map((e) =>
+      {(meta.ontology.region?.ask_examples ?? []).map((e) =>
         <span key={e} className="chip click" onClick={() => setQ(e)}>{e}</span>)}
     </div>
     {res && <div className="card">
@@ -184,7 +187,7 @@ function Ask() {
 
 function Graph() {
   const { meta, fmName, fm } = useApp();
-  const [formation, setFormation] = useState("TIPAM");
+  const [formation, setFormation] = useState(meta.ontology.region?.default_formation ?? "");
   const [hazard, setHazard] = useState("");
   const [g, setG] = useState<any>(null);
   const [tip, show, hide] = useTip();
@@ -207,7 +210,7 @@ function Graph() {
   return <div className="card">
     <div className="row wrap" style={{ marginBottom: 8 }}>
       <label className="row small" style={{ gap: 6 }}>Formation <select value={formation} onChange={(e) => setFormation(e.target.value)}>
-        <option value="">All</option>{meta.formation_order.slice(1, 9).map((f) => <option key={f} value={f}>{fmName(f)}</option>)}</select></label>
+        <option value="">All</option>{meta.formation_order.slice(1, -1).map((f) => <option key={f} value={f}>{fmName(f)}</option>)}</select></label>
       <label className="row small" style={{ gap: 6 }}>Hazard <select value={hazard} onChange={(e) => setHazard(e.target.value)}>
         <option value="">All</option>{[...meta.ribbon_hazards, "FISH"].map((h) => <option key={h} value={h}>{HAZARD_SHORT[h]}</option>)}</select></label>
       <span className="small muted">Wells → Formation → Hazard → Cause → Mitigation (edge label = cured/attempts). {g?.n_events ?? 0} events.</span>

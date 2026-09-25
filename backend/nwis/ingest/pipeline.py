@@ -248,7 +248,9 @@ def classify_detail(hazard: str, text: str, rate: float | None) -> tuple[str, st
 
 def infer_cause(hazard: str, subtype: str, formation: str | None) -> str | None:
     if hazard == "LOSS":
-        return {"TIPAM": "depleted sand", "SYLHET": "natural fractures", "NAMSANG": "unconsolidated formation"}.get(
+        # regional priors (Assam demo + North Sea public data); anything else defaults to induced fractures
+        return {"TIPAM": "depleted sand", "SYLHET": "natural fractures", "NAMSANG": "unconsolidated formation",
+                "SHETLAND": "natural fractures", "NORDLAND": "unconsolidated formation"}.get(
             formation or "", "induced fracture (high ECD)")
     if hazard == "KICK":
         return "underbalance in overpressured zone" if subtype == "kick" else "gas-bearing sand"
@@ -481,6 +483,11 @@ def _make_event(s: SentenceInfo, rm: dict, ctx: WellCtx | None, well_id, doc_id,
         if md is None and rm.get("depth_hdr"):
             md, depth_src = rm["depth_hdr"], "report header"
     formation, fm_src = s.formation, "text"
+    # a short record (one time-log line or bullet) talks about one place, so a formation named anywhere in it
+    # applies; a long narrative record (a whole well history) names many, so there depth + the well's tops win
+    long_record = len(rm["text"]) > 400
+    if formation is None and long_record and ctx and md is not None:
+        formation, fm_src = ctx.formation_at_md(md), "depth->tops"
     if formation is None:
         formation = detect_formation(rm["text"])
         fm_src = "record" if formation else fm_src

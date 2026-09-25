@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { wsUrl } from "./api";
+import { SIGNED_OUT_EVENT, wsUrl } from "./api";
 import type { Alert, Brief, Episode, LiveEvent, LiveStatus, RibbonBin, Sample, TopPred, Zone } from "./types";
 
 export type StreamMode = "replay" | "live";
@@ -27,6 +27,7 @@ export interface LiveData {
   mode: StreamMode;          // stored replay (private) or the shared live rig feed
   offlineSince: number | null;  // epoch ms of the cached snapshot being shown while disconnected
   outbox: number;            // acknowledgements waiting for the link to come back
+  noStream: string | null;   // server has no real-time stream to replay (e.g. the real public-data region)
 }
 
 /** Who is at the console: written into the decision log with every acknowledgement and feedback. */
@@ -52,7 +53,7 @@ function save(key: string, v: unknown) {
 class LiveStore {
   d: LiveData = { connected: false, playing: true, speed: 4, status: null, samples: [], alerts: new Map(), zones: [], tops: {},
     window: {}, grid: [], episodes: [], ribbon: [], events: [], sections: [], version: 0, autoPause: true, pausedOn: null,
-    sessionId: null, handover: null, mode: load<StreamMode>(MODE_KEY, "replay"), offlineSince: null, outbox: 0 };
+    sessionId: null, handover: null, mode: load<StreamMode>(MODE_KEY, "replay"), offlineSince: null, outbox: 0, noStream: null };
   seenCritical = new Set<string>();
   ws: WebSocket | null = null;
   subs = new Set<() => void>();
@@ -94,9 +95,17 @@ class LiveStore {
     const ws = new WebSocket(wsUrl(`/ws/live${this.d.mode === "live" ? "?mode=live" : ""}`));
     this.ws = ws;
     ws.onopen = () => { this.attempts = 0; this.d.connected = true; this.bump(true); };
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
       if (this.ws !== ws) return;             // an intentional reconnect (mode switch) already replaced it
       this.d.connected = false; this.ws = null;
+      if (this.d.noStream) { this.bump(true); return; }   // nothing to reconnect to
+      if (ev.code === 4401) {
+        // the server refused the session (signed out or expired): show sign-in instead of retrying forever;
+        // LiveProvider reconnects once the user is back in
+        this.bump(true);
+        window.dispatchEvent(new Event(SIGNED_OUT_EVENT));
+        return;
+      }
       this.snapshot(true);
       if (this.d.offlineSince == null) this.d.offlineSince = Date.now();
       this.bump(true);
@@ -109,7 +118,7 @@ class LiveStore {
 
   setMode(m: StreamMode) {
     if (m === this.d.mode) return;
-    this.d.mode = m; save(MODE_KEY, m);
+    this.d.mode = m; save(MODE_KEY, m); this.d.noStream = null;
     const old = this.ws; this.ws = null;
     old?.close();
     this.d.connected = false; this.d.status = null; this.d.samples = []; this.d.alerts = new Map();
@@ -125,8 +134,10 @@ class LiveStore {
 
   onMessage(m: any) {
     const d = this.d;
-    if (m.type === "init") {
-      d.playing = true; d.offlineSince = null;
+    if (m.type === "error" && m.code === "no_stream") {
+      d.noStream = m.message;
+    } else if (m.type === "init") {
+      d.playing = true; d.offlineSince = null; d.noStream = null;
       d.samples = []; d.alerts = new Map(); d.events = [];
       d.episodes = m.episodes; d.zones = m.zones; d.tops = m.tops; d.window = m.window; d.grid = m.grid; d.ribbon = m.ribbon;
       d.sections = m.sections; d.status = m.status; d.pausedOn = null; d.sessionId = m.session_id ?? null;

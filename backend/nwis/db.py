@@ -50,6 +50,8 @@ CREATE TABLE IF NOT EXISTS review_queue (
 CREATE TABLE IF NOT EXISTS alert_feedback (
   id INTEGER PRIMARY KEY AUTOINCREMENT, alert_key TEXT, hazard TEXT, useful INTEGER, note TEXT, ts TEXT);
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS lot_tests (
+  well_id TEXT, depth_md REAL, casing TEXT, emw_ppg REAL, test_type TEXT);
 CREATE TABLE IF NOT EXISTS decision_log (
   seq INTEGER PRIMARY KEY AUTOINCREMENT, ts_wall TEXT, session_id TEXT, well_id TEXT, t REAL, md REAL, alert_id TEXT,
   alert_key TEXT, hazard TEXT, event TEXT, level TEXT, actor TEXT, payload TEXT, prev_hash TEXT, hash TEXT);

@@ -9,9 +9,9 @@ type Mode = "md" | "tvd" | "flat";
 export default function Correlation() {
   const { meta, params, fm, fmName } = useApp();
   const [data, setData] = useState<any>(null);
-  const [radius, setRadius] = useState(8);
+  const [radius, setRadius] = useState(meta.ontology.region?.default_radius_km ?? 8);
   const [mode, setMode] = useState<Mode>("flat");
-  const [flatOn, setFlatOn] = useState("TIPAM");
+  const [flatOn, setFlatOn] = useState(meta.ontology.region?.default_formation ?? meta.formation_order[1]);
   const [tip, show, hide] = useTip();
   const well = params.well ?? meta.active_well;
 
@@ -51,8 +51,8 @@ export default function Correlation() {
       <div className="seg">{(["md", "tvd", "flat"] as Mode[]).map((m) => <button key={m} className={mode === m ? "on" : ""} onClick={() => setMode(m)}>
         {m === "md" ? "Measured depth" : m === "tvd" ? "True vertical depth" : "Flatten on top"}</button>)}</div>
       {mode === "flat" && <select value={flatOn} onChange={(e) => setFlatOn(e.target.value)}>
-        {["NAMSANG", "GIRUJAN", "TIPAM", "BARAIL", "KOPILI", "SYLHET"].map((f) => <option key={f} value={f}>{fmName(f)}</option>)}</select>}
-      <label className="row small" style={{ gap: 6 }}>Radius <select value={radius} onChange={(e) => setRadius(Number(e.target.value))}>{[3, 5, 8, 12].map((r) => <option key={r} value={r}>{r} km</option>)}</select></label>
+        {meta.formation_order.slice(1, -1).map((f) => <option key={f} value={f}>{fmName(f)}</option>)}</select>}
+      <label className="row small" style={{ gap: 6 }}>Radius <select value={radius} onChange={(e) => setRadius(Number(e.target.value))}>{[3, 5, 8, 10, 15, 25, 40].map((r) => <option key={r} value={r}>{r} km</option>)}</select></label>
       <HazardLegend codes={[...meta.ribbon_hazards, "FISH"]} colors={HAZARD_COLOR} labels={HAZARD_SHORT} />
     </div>
     <div className="card scroll">

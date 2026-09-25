@@ -17,6 +17,12 @@ def main() -> None:
     v.add_argument("folder")
     sub.add_parser("metrics", help="print stored evaluation metrics")
     sub.add_parser("evaluate-live", help="replay the active well: alarm-budget sweep and DTW top-pick accuracy")
+    bp = sub.add_parser("build-public", help="build a real-data knowledge base from public Sodir FactPages exports "
+                                              "(run with NWIS_REGION=norway and a separate NWIS_DATA_DIR)")
+    bp.add_argument("--source", default="sodir", choices=["sodir"])
+    bp.add_argument("--quadrants", default="15,16", help="comma-separated Norwegian quadrants, e.g. 15,16,25 ('all' = no filter)")
+    bp.add_argument("--from-folder", default=None, help="folder with the Sodir CSV exports (default: <data dir>/public/sodir)")
+    bp.add_argument("--download", action="store_true", help="download the CSV exports from factpages.sodir.no first")
     vv = sub.add_parser("validate-volve", help="score NWIS on the public Equinor Volve DDR XML (download it first)")
     vv.add_argument("folder", help="folder containing Volve drillReport *.xml (searched recursively)")
     vv.add_argument("--limit", type=int, default=None, help="only read this many XML files")
@@ -55,6 +61,13 @@ def main() -> None:
         db = DB()
         print(json.dumps({"extraction": db.kv_get("extraction_eval"), "risk": db.kv_get("risk_metrics"),
                           "live": db.kv_get("live_eval")}, indent=1))
+    elif a.cmd == "build-public":
+        from pathlib import Path
+        from .public import sodir
+        q = None if a.quadrants.strip().lower() == "all" else {x.strip() for x in a.quadrants.split(",") if x.strip()}
+        res = sodir.build(Path(a.from_folder) if a.from_folder else None, q, a.download)
+        print(json.dumps(res, indent=1, default=str))
+        print(sodir.ATTRIBUTION)
     elif a.cmd == "validate-volve":
         from .db import DB
         from .validate.volve import run_and_store

@@ -32,6 +32,11 @@ export default function LiveOps() {
   const markers = useMemo(() => [...live.alerts.values()].filter((a) => a.source !== "geology")
     .map((a) => ({ t: a.t, color: LEVEL[a.level].color, label: a.title })), [live.version]);
 
+  if (live.noStream && !meta.stream?.live_available) return <div className="card" style={{ maxWidth: 760 }}>
+    <h3>No real-time stream in this dataset</h3>
+    <div>{live.noStream}</div>
+    <div className="small muted" style={{ marginTop: 8 }}>{meta.ontology.region?.data_notice} Offset Map, Correlation, Risk &amp; Planning and Knowledge work on this data.</div>
+  </div>;
   if (!live.connected && !st) return <div className="empty">Connecting to the eRTMAC stream…</div>;
   const win = st?.window;
   const ecdBad = win?.max_ecd != null && st && st.ecd > win.max_ecd;

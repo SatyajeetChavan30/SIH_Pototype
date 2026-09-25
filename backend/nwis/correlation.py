@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from . import config
-from .domain.ontology import FORMATION_ORDER
+from .domain.ontology import DEFAULT_TD, FORMATION_ORDER, IS_ASSAM, SURFACE
 from .geo import Trajectory, haversine_km
 from .kb import KnowledgeBase, WellRec
 
@@ -53,7 +53,7 @@ def target_from_well(kb: KnowledgeBase, well_id: str, picked_tops_tvd: dict[str,
                   exclude={w.id})
 
 
-def default_plan(kb: KnowledgeBase, lat: float, lon: float, td_formation: str = "SYLHET", radius_km: float = 10.0,
+def default_plan(kb: KnowledgeBase, lat: float, lon: float, td_formation: str = DEFAULT_TD, radius_km: float = 10.0,
                  name: str = "Planned well") -> Target:
     """Vertical plan with casing points/mud from recent offset practice (for 'what if we drill here?')."""
     near = kb.nearby(lat, lon, radius_km) or kb.nearby(lat, lon, 50.0)
@@ -72,6 +72,9 @@ def default_plan(kb: KnowledgeBase, lat: float, lon: float, td_formation: str = 
         v = [w.sections[idx][key] for w in recent]
         return round(float(np.median(v)), 2) if v else default
 
+    if not IS_ASSAM:
+        return Target(None, name, lat, lon, traj, _offset_casing_plan([w for w, _ in near], td_tvd), config.REFERENCE_YEAR,
+                      kb.structure_of(lat, lon), td_tvd)
     shoes = [90.0, tops["GIRUJAN"]["tvd"] - 40, tops["BARAIL"]["tvd"] - 12, td_tvd]
     sections = []
     for k, (hole, csg) in enumerate([("26\"", "20\""), ("17-1/2\"", "13-3/8\""), ("12-1/4\"", "9-5/8\""), ("8-1/2\"", "7\" liner")]):
@@ -82,6 +85,30 @@ def default_plan(kb: KnowledgeBase, lat: float, lon: float, td_formation: str = 
     return Target(None, name, lat, lon, traj, sections, config.REFERENCE_YEAR, kb.structure_of(lat, lon), td_tvd)
 
 
+def _offset_casing_plan(wells: list[WellRec], td: float) -> list[dict]:
+    """Casing programme copied from nearby offsets: their most common number of sections, median shoe depth and
+    mud weight per section (used where no regional casing rule is coded, e.g. real public North Sea data)."""
+    with_secs = [w for w in wells if w.sections]
+    if not with_secs:
+        return [{"idx": 0, "hole": "12-1/4\"", "casing": "open hole", "top_md": 0.0, "shoe_md": td, "mw_ppg": 9.5,
+                 "ecd_ppg": 9.9}]
+    counts: dict[int, int] = {}
+    for w in with_secs:
+        counts[len(w.sections)] = counts.get(len(w.sections), 0) + 1
+    n = max(counts, key=lambda k: (counts[k], k))
+    group = [w for w in with_secs if len(w.sections) == n]
+    out, top = [], 0.0
+    for k in range(n):
+        col = [w.sections[k] for w in group]
+        shoe = td if k == n - 1 else min(float(np.median([c["shoe_md"] for c in col])), td - 10.0 * (n - 1 - k))
+        mw = round(float(np.median([c["mw_ppg"] for c in col])), 2)
+        ecd = round(float(np.median([c["ecd_ppg"] for c in col])), 2)
+        out.append({"idx": k, "hole": col[0]["hole"], "casing": col[0]["casing"], "top_md": top, "shoe_md": max(shoe, top + 10.0),
+                    "mw_ppg": mw, "ecd_ppg": max(ecd, mw + 0.1)})
+        top = out[-1]["shoe_md"]
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Formation tops prediction
 # ---------------------------------------------------------------------------
@@ -89,11 +116,17 @@ def predict_tops(kb: KnowledgeBase, target: Target, near: list[tuple[WellRec, fl
     out: dict[str, dict] = {}
     prev = 0.0
     near = [(w, d) for w, d in near if w.id not in target.exclude][:max(k, 1)]
+    absent: list[str] = []
     for code in FORMATION_ORDER:
-        if code == "ALLUVIUM":
+        if code == SURFACE:
             out[code] = {"tvd": 0.0, "sd": 0.0, "n": len(near)}
             continue
         vals = [(w.tops_tvd[code], d) for w, d in near if code in w.tops_tvd]
+        if not vals and not IS_ASSAM:
+            # real data: a unit no nearby well penetrated is absent here (eroded / not deposited), not "typical
+            # thickness below the last one". It is pinched out at the top of the next unit that is present.
+            absent.append(code)
+            continue
         if vals:
             z = np.array([v for v, _ in vals])
             d = np.array([x for _, x in vals])
@@ -109,6 +142,12 @@ def predict_tops(kb: KnowledgeBase, target: Target, near: list[tuple[WellRec, fl
         zh = max(zh, prev + 30.0)
         out[code] = {"tvd": zh, "sd": sd, "n": n}
         prev = zh
+    for code in absent:
+        i = FORMATION_ORDER.index(code)
+        below = next((out[c] for c in FORMATION_ORDER[i + 1:] if c in out), None)
+        above = next((out[c] for c in reversed(FORMATION_ORDER[:i]) if c in out), {"tvd": 0.0, "sd": 0.0})
+        ref = below or above
+        out[code] = {"tvd": ref["tvd"], "sd": ref["sd"], "n": 0, "absent": True}
     # live re-anchoring on picked (penetrated) tops
     if target.picked_tops_tvd:
         deepest = max(target.picked_tops_tvd, key=lambda c: FORMATION_ORDER.index(c))
@@ -120,6 +159,7 @@ def predict_tops(kb: KnowledgeBase, target: Target, near: list[tuple[WellRec, fl
                 out[code].update(tvd=target.picked_tops_tvd[code], sd=2.0, picked=True)
             elif ci > di:
                 out[code].update(tvd=out[code]["tvd"] + delta, sd=out[code]["sd"] * 0.7, shifted_m=round(delta, 1))
+    out = {c: out[c] for c in FORMATION_ORDER if c in out}
     for code, v in out.items():
         v["md"] = float(target.traj.md_at_tvd(v["tvd"]))
         v["tvd"] = round(v["tvd"], 1)
@@ -136,7 +176,7 @@ def thickness(tops: dict[str, dict], code: str, kb: KnowledgeBase) -> float:
 
 
 def formation_at(tops: dict[str, dict], tvd: float, kb: KnowledgeBase) -> tuple[str, float]:
-    cur = "ALLUVIUM"
+    cur = SURFACE
     for code in FORMATION_ORDER:
         if code in tops and tops[code]["tvd"] <= tvd:
             cur = code

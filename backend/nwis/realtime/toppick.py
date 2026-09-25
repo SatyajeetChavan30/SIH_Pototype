@@ -16,7 +16,7 @@ from __future__ import annotations
 import numpy as np
 
 from .. import config
-from ..domain.ontology import FORMATION_ORDER
+from ..domain.ontology import BOTTOM, FORMATION_ORDER
 from ..kb import KnowledgeBase
 
 BIN_M = 2.0
@@ -191,7 +191,7 @@ def next_formation(picked: dict[str, float], tops: dict[str, dict], tvd: float) 
     """First formation below the deepest picked one that has a predicted top."""
     deepest = max((FORMATION_ORDER.index(c) for c in picked), default=0)
     for code in FORMATION_ORDER[deepest + 1:]:
-        if code in tops and code != "BASEMENT":
+        if code in tops and code != BOTTOM and not tops[code].get("absent"):
             return code
     return None
 

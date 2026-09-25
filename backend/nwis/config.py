@@ -14,6 +14,9 @@ UPLOADS_DIR = DATA_DIR / "uploads"
 FRONTEND_DIST = Path(os.environ.get("NWIS_FRONTEND_DIST", ROOT / "frontend" / "dist"))
 
 SEED = int(os.environ.get("NWIS_SEED", "26121"))
+# Stratigraphic region (see domain/ontology.py): "assam" = synthetic demo, "norway" = real public Sodir data.
+# Each region needs its own data folder (NWIS_DATA_DIR), because tops and models are region-specific.
+REGION = os.environ.get("NWIS_REGION", "assam").lower()
 # Reference "today" for recency weighting; fixed so demo results are reproducible.
 REFERENCE_YEAR = 2026
 
@@ -34,6 +37,11 @@ DTW_CONFLICT_M = 15.0   # DTW vs mud-logger difference that raises a correlation
 # or "witsml:https://store/...?well=..&wellbore=..&log=..". See realtime/sources.py.
 STREAM = os.environ.get("NWIS_STREAM", "replay")
 STREAM_GAP_S = float(os.environ.get("NWIS_STREAM_GAP_S", "300"))   # no packet for this long -> stream-gap event
+
+# Offset-map background tiles. Default: OpenStreetMap's public tiles (no key; fine for a demo, attribution
+# required). For OIL, point this at an on-prem tile server so the map works without internet.
+TILE_URL = os.environ.get("NWIS_TILE_URL", "https://tile.openstreetmap.org/{z}/{x}/{y}.png")
+TILE_ATTRIBUTION = os.environ.get("NWIS_TILE_ATTRIBUTION", "&copy; OpenStreetMap contributors")
 
 # Optional on-prem speech-to-text for expert voice memos (pip install "nwis[asr]"; weights must be cached).
 ASR_MODEL = os.environ.get("NWIS_ASR_MODEL", "small")

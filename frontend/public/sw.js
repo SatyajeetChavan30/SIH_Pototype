@@ -24,8 +24,10 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
-    const shells = keys.filter((k) => k.startsWith(`${SHELL}-`)).sort();
-    await Promise.all(shells.slice(0, -1).map((k) => caches.delete(k)));   // keep only the newest shell
+    // keep only the newest versioned shell (names are nwis-shell-<build timestamp>; other caches are left alone)
+    const shells = keys.filter((k) => /^nwis-shell-\d+$/.test(k)).sort((a, b) => Number(a.split("-").pop()) - Number(b.split("-").pop()));
+    await Promise.all(shells.slice(0, -1).map((k) => caches.delete(k)));
+    await caches.delete("nwis-shell-nav");   // navigation cache name used by the first release of this worker
     await self.clients.claim();
   })());
 });
@@ -49,9 +51,13 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin || url.pathname.startsWith("/ws/")) return;
   if (req.mode === "navigate") {
-    event.respondWith(networkFirst(req, SHELL + "-nav", "/index.html"));
+    event.respondWith(networkFirst(req, "nwis-nav", "/index.html"));
   } else if (url.pathname.startsWith("/assets/")) {
-    event.respondWith(caches.match(req).then((hit) => hit || fetch(req)));
+    // hashed bundles: cache first, and store on first fetch so a build newer than this worker still works offline
+    event.respondWith(caches.match(req).then((hit) => hit || fetch(req).then(async (res) => {
+      if (res.ok) (await caches.open("nwis-assets")).put(req, res.clone());
+      return res;
+    })));
   } else if (API_CACHED.some((re) => re.test(url.pathname))) {
     event.respondWith(networkFirst(req, API));
   }

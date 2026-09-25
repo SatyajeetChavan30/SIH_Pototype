@@ -136,3 +136,24 @@ def test_decision_log_names_the_signed_in_user_not_the_claimed_actor(app_client)
     with c.websocket_connect("/ws/live") as ws:
         msg = json.loads(ws.receive_text())
         assert msg == {"type": "error", "message": "sign in required"}
+
+
+@built
+def test_socket_commands_are_attributed_to_the_signed_in_user(app_client):
+    c = app_client
+    c.cookies.clear()
+    field = _login(c, "field")
+    with c.websocket_connect("/ws/live") as ws:
+        init = json.loads(ws.receive_text())
+        ws.send_text(json.dumps({"cmd": "budget", "value": 0.5, "actor": "Someone Else"}))
+        ws.send_text(json.dumps({"cmd": "ack", "id": "A-missing", "key": "RT:LOSS:flow-pit", "actor": "Someone Else",
+                                 "queued_offline": True, "acted_at": "2026-09-25T09:00:00Z"}))
+        for _ in range(50):                       # wait until both commands have been handled
+            msg = json.loads(ws.receive_text())
+            if msg["type"] == "tick" and msg["status"]["budget"]["budget_per_hour"] == 0.5:
+                break
+    rows = c.get("/api/audit", params={"session_id": init["session_id"]}).json()["rows"]
+    mine = {r["event"]: r for r in rows if r["event"] in ("budget_changed", "acknowledged")}
+    assert set(mine) == {"budget_changed", "acknowledged"}
+    assert all(r["actor"] == field["display_name"] for r in mine.values())
+    assert mine["acknowledged"]["payload"]["queued_offline"] and mine["acknowledged"]["payload"]["unmatched"]

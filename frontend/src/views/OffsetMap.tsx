@@ -13,7 +13,7 @@ function ClickCatcher({ onClick }: { onClick: (lat: number, lon: number) => void
 export default function OffsetMap() {
   const { meta, go, fmName, openCitation, params } = useApp();
   const [wells, setWells] = useState<WellSummary[]>([]);
-  const [radius, setRadius] = useState(Number(params.radius ?? 8));
+  const [radius, setRadius] = useState(Number(params.radius ?? (meta.ontology.region?.default_radius_km ?? 8)));
   const [center, setCenter] = useState<{ lat: number; lon: number; label: string } | null>(null);
   const [hz, setHz] = useState<string[]>(meta.ribbon_hazards.concat(["FISH"] as any));
   const [selId, setSelId] = useState<string | null>(params.well ?? null);
@@ -48,7 +48,7 @@ export default function OffsetMap() {
       <p className="lede">Nearby wells within a user-defined radius of the active well, or of any point you click (a planned location). Colour = dominant recorded hazard; size = number of events; lines = well trajectories.</p>
     </div>
     <div className="row wrap card" style={{ gap: 14 }}>
-      <label className="row" style={{ gap: 8 }}>Radius <input type="range" min={1} max={20} step={0.5} value={radius} onChange={(e) => setRadius(Number(e.target.value))} />
+      <label className="row" style={{ gap: 8 }}>Radius <input type="range" min={1} max={40} step={0.5} value={radius} onChange={(e) => setRadius(Number(e.target.value))} />
         <b className="num" style={{ minWidth: 48 }}>{radius} km</b></label>
       <span className="small muted">Centre: <b className="ink2">{center?.label}</b></span>
       {active && center?.label !== active.name && <button className="btn sm" onClick={() => setCenter({ lat: active.lat, lon: active.lon, label: active.name })}>Back to active well</button>}
@@ -61,7 +61,9 @@ export default function OffsetMap() {
     <div style={{ display: "grid", gridTemplateColumns: "minmax(420px, 1.6fr) minmax(320px, 1fr)", gap: 12 }}>
       <div className={`card ${tilesOk ? "" : "gridbg"}`} style={{ padding: 0, height: 620, position: "relative" }}>
         {active && <MapContainer center={[active.lat, active.lon]} zoom={11} style={{ height: "100%", width: "100%" }} preferCanvas>
-          {tilesOk && <TileLayer url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png" attribution="&copy; OpenStreetMap &copy; CARTO"
+          {/* keyless tiles by default; the server can point this at an on-prem tile server (NWIS_TILE_URL) */}
+          {tilesOk && <TileLayer url={meta.map_tiles?.url ?? "https://tile.openstreetmap.org/{z}/{x}/{y}.png"}
+            attribution={meta.map_tiles?.attribution ?? "&copy; OpenStreetMap contributors"} className="basemap"
             eventHandlers={{ tileerror: () => setTilesOk(false) }} />}
           <ClickCatcher onClick={(lat, lon) => { setCenter({ lat, lon, label: `Planned @ ${lat.toFixed(4)}, ${lon.toFixed(4)}` }); setSelId(null); }} />
           {center && <Circle center={[center.lat, center.lon]} radius={radius * 1000} pathOptions={{ color: "#3987e5", weight: 1.5, fillOpacity: 0.05, dashArray: "6 6" }} />}

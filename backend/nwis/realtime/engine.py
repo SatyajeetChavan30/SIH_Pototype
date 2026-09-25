@@ -14,7 +14,7 @@ import numpy as np
 
 from .. import audit, config
 from ..correlation import formation_at, target_from_well
-from ..domain.ontology import FORMATION_BY_CODE, FORMATION_ORDER, HAZARD_BY_CODE
+from ..domain.ontology import FORMATION_BY_CODE, FORMATION_ORDER, HAZARD_BY_CODE, formation_name
 from ..kb import KnowledgeBase
 from ..risk.evidence import risk_profile
 from ..risk.mw_window import check_against_window, mw_window
@@ -195,12 +195,12 @@ class LiveSession:
                                                 t=self.data["t"][max(self.i - 1, 0)], md=self.data["md"][max(self.i - 1, 0)],
                                                 payload={"start_index": int(idx)}))
 
-    def set_budget(self, alarms_per_hour: float) -> None:
+    def set_budget(self, alarms_per_hour: float, actor: str = "RTOC") -> None:
         self.budget = float(alarms_per_hour)
         self.conformal.set_budget(self.budget)
         s = self.recent[-1] if self.recent else None
         self.audit_buffer.append(audit.make_row("budget_changed", session_id=self.session_id, well_id=self.well.id,
-                                                t=s["t"] if s else None, md=s["md"] if s else None, actor="RTOC",
+                                                t=s["t"] if s else None, md=s["md"] if s else None, actor=actor,
                                                 payload={"alarms_per_hour": self.conformal.budget,
                                                          "alpha": self.conformal.alpha}))
 
@@ -356,7 +356,7 @@ class LiveSession:
         if p is None:
             return
         self.dtw_done.add(code)
-        name = FORMATION_BY_CODE[code].name
+        name = formation_name(code)
         rec = {k: p[k] for k in ("formation", "tvd", "sd", "n_refs", "refs")} | {"md": round(s["md"], 1), "t": s["t"]}
         self.dtw_picks.append(rec)
         if self.top_mode == "dtw":
@@ -394,11 +394,11 @@ class LiveSession:
                if source == "dtw" and info else "picked")
         ev = {"type": "top_pick", "formation": code, "tvd": round(tvd, 1), "md": round(s["md"], 1),
               "t": s["t"], "delta_m": round(delta, 1), "source": source,
-              "message": f"{FORMATION_BY_CODE[code].name} top {how} at {tvd:,.0f} m TVD "
+              "message": f"{formation_name(code)} top {how} at {tvd:,.0f} m TVD "
                          f"({delta:+.0f} m vs prognosis) - look-ahead re-anchored"}
         self.events_log.append(ev)
         self.history_events.append(ev)
-        self.alerts.upsert(f"GEO:{code}", "GEO", "geology", "info", f"Top picked: {FORMATION_BY_CODE[code].name}",
+        self.alerts.upsert(f"GEO:{code}", "GEO", "geology", "info", f"Top picked: {formation_name(code)}",
                            f"Picked at {tvd:,.0f} m TVD ({delta:+.0f} m vs offset-predicted top). All deeper offset hazards "
                            f"re-projected.", s["md"], s["t"], formation=code, confidence=1.0)
 
@@ -416,7 +416,7 @@ class LiveSession:
                 lvl = "warning" if z["peak"] >= 0.45 or z["n_events"] >= 4 else "watch"
                 hz = HAZARD_BY_CODE[z["hazard"]].label
                 where = "Bit is INSIDE" if inside else f"Bit {dist:,.0f} m above"
-                title = f"Look-ahead: {hz} zone in {FORMATION_BY_CODE[z['formation']].name} at {z['md0']:,.0f}-{z['md1']:,.0f} m"
+                title = f"Look-ahead: {hz} zone in {formation_name(z['formation'])} at {z['md0']:,.0f}-{z['md1']:,.0f} m"
                 msg = (f"{where} the interval where {z['n_events']} of {z['n_exposed']} offset wells that drilled it recorded "
                        f"{hz.lower()} (offset evidence {z['p_offsets']:.0%}, 90% CI {z['lo']:.0%}-{z['hi']:.0%}; "
                        f"model {z['p_model']:.0%} at planned mud/trajectory).")
@@ -434,7 +434,7 @@ class LiveSession:
         for f in check_against_window(self.win, fm, s["mw"], s["ecd"]):
             key = f"MW:{f['hazard']}:{fm}"
             self.alerts.upsert(key, f["hazard"], "mud-window", "warning" if f["p"] < 0.5 else "critical",
-                               f"Mud outside offset-derived window ({FORMATION_BY_CODE[fm].name})", f["message"], s["md"],
+                               f"Mud outside offset-derived window ({formation_name(fm)})", f["message"], s["md"],
                                s["t"], formation=fm, confidence=f["p"],
                                drivers=[{"channel": "ecd" if f["hazard"] == "LOSS" else "mw", "value": f["value"],
                                          "baseline": f["limit"], "unit": "ppg"}])

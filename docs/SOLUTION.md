@@ -281,6 +281,8 @@ The staged path to full deployment, with exit criteria and target metrics, is in
 
 ## 8. Known limitations (stated up-front)
 
+- **Data.** The demo is synthetic because OIL's nine data sources are internal. A real public-data mode (Norwegian North Sea, Sodir FactPages, NLOD) runs the same pipeline on genuine wells, tops, casing, mud and incident histories; see [`DATA_SOURCES.md`](DATA_SOURCES.md), which also explains how to request real Assam data from DGH's National Data Repository.
+
 - The demo data is synthetic, though calibrated to published Assam geology. Metrics are about mechanism, not field accuracy.
 - OCR is measured on synthetic scans (a clean 200-dpi scan and a 150-dpi photocopy), not on OIL's archive. Handwriting, stamps over text, tables with ruled grids and faded carbon copies are not in the test set. The design compensates with confidence scores, the review queue and cross-document consolidation, since DDRs usually repeat what the WCR says.
 - Sign-in uses local accounts stored in the NWIS database. Production would federate with OIL's directory (SSO/LDAP), and the session secret should be set explicitly (`NWIS_SECRET`) when more than one server shares users.

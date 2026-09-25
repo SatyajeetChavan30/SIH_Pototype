@@ -19,7 +19,8 @@ from fastapi.staticfiles import StaticFiles
 from .. import audit, auth, config
 from ..correlation import correlation_panel, default_plan, target_from_well
 from ..db import DB
-from ..domain.ontology import FORMATION_ORDER, HAZARD_BY_CODE, RIBBON_HAZARDS, ontology_payload
+from ..domain.ontology import REGION as ONTOLOGY_REGION
+from ..domain.ontology import DEFAULT_TD, FORMATION_ORDER, HAZARD_BY_CODE, RIBBON_HAZARDS, ontology_payload
 from ..geo import haversine_km
 from ..ingest.nlp import SentenceClassifier
 from ..ingest.ocr import ocr_status
@@ -168,7 +169,7 @@ def kb() -> KnowledgeBase:
     return S.kb
 
 
-def _target(well_id: str | None, lat: float | None, lon: float | None, td_formation: str = "SYLHET"):
+def _target(well_id: str | None, lat: float | None, lon: float | None, td_formation: str = DEFAULT_TD):
     k = kb()
     if well_id:
         if well_id not in k.wells:
@@ -232,7 +233,8 @@ def meta():
     k = kb()
     return J({"ontology": ontology_payload(), "structures": list(k.structures.values()), "active_well": k.active_id,
               "ocr": ocr_status(), "llm": llm_status(), "asr": asr_status(), "build": S.db.kv_get("build_info"),
-              "synthetic": True, "top_pick_mode": config.TOP_PICK_MODE,
+              "synthetic": ONTOLOGY_REGION["synthetic"], "top_pick_mode": config.TOP_PICK_MODE,
+              "map_tiles": {"url": config.TILE_URL, "attribution": config.TILE_ATTRIBUTION},
               "stream": {"live_available": S.hub is not None, "spec": config.STREAM,
                          "describe": S.hub.source.describe() if S.hub else "stored replay"},
               "formation_order": FORMATION_ORDER, "ribbon_hazards": RIBBON_HAZARDS})
@@ -259,7 +261,7 @@ def wells():
     return J(out)
 
 
-@app.get("/api/wells/{well_id}")
+@app.get("/api/wells/{well_id:path}")   # public well names contain "/" (e.g. 15/9-19 A)
 def well_detail(well_id: str):
     k = kb()
     w = k.wells.get(well_id)
@@ -269,6 +271,8 @@ def well_detail(well_id: str):
     return J({**_well_summary(w), "tops": [{"formation": c, "md": w.tops_md[c], "tvd": w.tops_tvd[c]} for c in FORMATION_ORDER if c in w.tops_md],
               "sections": w.sections, "events": w.events, "documents": docs,
               "lessons": [l for l in k.lessons if l["well_id"] == well_id],
+              "lot_tests": S.db.query("SELECT depth_md, casing, emw_ppg, test_type FROM lot_tests WHERE well_id=? "
+                                      "ORDER BY depth_md", (well_id,)),
               "trajectory": w.trajectory_latlon(step=3)})
 
 
@@ -297,7 +301,7 @@ def correlation(well_id: str | None = None, lat: float | None = None, lon: float
 # ---------------------------------------------------------------------------- risk
 @app.get("/api/risk/profile")
 def profile(well_id: str | None = None, lat: float | None = None, lon: float | None = None, radius_km: float = 8.0,
-            td_formation: str = "SYLHET", bin_m: float = 25.0):
+            td_formation: str = DEFAULT_TD, bin_m: float = 25.0):
     t = _target(well_id, lat, lon, td_formation)
     p = risk_profile(kb(), t, radius_km, bin_m=bin_m, model=S.model)
     for b in p["bins"]:
@@ -308,7 +312,7 @@ def profile(well_id: str | None = None, lat: float | None = None, lon: float | N
 
 @app.get("/api/risk/mw-window")
 def window(well_id: str | None = None, lat: float | None = None, lon: float | None = None, radius_km: float = 10.0,
-           td_formation: str = "SYLHET"):
+           td_formation: str = DEFAULT_TD):
     t = _target(well_id, lat, lon, td_formation)
     w = mw_window(kb(), t, radius_km)
     p = risk_profile(kb(), t, 8.0)
@@ -324,13 +328,13 @@ def window(well_id: str | None = None, lat: float | None = None, lon: float | No
 
 @app.post("/api/risk/whatif")
 def whatif(body: dict):
-    t = _target(body.get("well_id"), body.get("lat"), body.get("lon"), body.get("td_formation") or "SYLHET")
+    t = _target(body.get("well_id"), body.get("lat"), body.get("lon"), body.get("td_formation") or DEFAULT_TD)
     return J(run_whatif(kb(), t, body.get("overrides") or {}, S.model, float(body.get("radius_km") or 8.0)))
 
 
 @app.get("/api/brief", response_class=HTMLResponse)
 def brief(well_id: str | None = None, lat: float | None = None, lon: float | None = None, radius_km: float = 8.0,
-          td_formation: str = "SYLHET"):
+          td_formation: str = DEFAULT_TD):
     t = _target(well_id, lat, lon, td_formation)
     return HTMLResponse(hazard_brief(kb(), t, radius_km, S.model))
 
@@ -491,7 +495,7 @@ async def memo_audio(request: Request, file: UploadFile = File(...), author: str
     return J({"transcript": tr, **(await asyncio.to_thread(run))})
 
 
-@app.get("/api/aar/{event_id}")
+@app.get("/api/aar/{event_id:path}")
 def aar(event_id: str):
     r = after_action_review(kb(), event_id)
     if r is None:
@@ -499,7 +503,7 @@ def aar(event_id: str):
     return J(r)
 
 
-@app.post("/api/aar/{event_id}/approve")
+@app.post("/api/aar/{event_id:path}/approve")
 def aar_approve(event_id: str, body: dict, request: Request):
     k = kb()
     text = (body.get("text") or "").strip()
@@ -521,7 +525,7 @@ def review_list(status: str = "open"):
     return J(rows)
 
 
-@app.post("/api/review/{rid}")
+@app.post("/api/review/{rid:path}")
 def review_action(rid: str, body: dict, request: Request):
     r = S.db.one("SELECT * FROM review_queue WHERE id=?", (rid,))
     if not r:
@@ -654,6 +658,13 @@ async def live(ws: WebSocket):
     if ws.query_params.get("mode") == "live" and S.hub is not None:
         await _live_feed(ws, S.hub)
         return
+    if not (config.LOGS_DIR / "active_stream.npz").exists() or S.kb.active is None:
+        # e.g. the real public-data region: there is no public real-time stream to replay
+        await ws.send_json({"type": "error", "code": "no_stream",
+                            "message": "No real-time stream in this dataset. Connect a WITS-0 / WITSML feed "
+                                       "(NWIS_STREAM) or use the Assam demo for the replay."})
+        await ws.close()
+        return
     session = await asyncio.to_thread(LiveSession, S.kb, S.model, S.analogs)
     state = {"playing": True, "speed": 4}
     lock = asyncio.Lock()   # the session is not thread-safe: never step it while a jump/reset is running
@@ -728,13 +739,14 @@ def _ack_extra(msg: dict) -> dict:
 async def _common_command(session: LiveSession, msg: dict, user: dict | None = None) -> dict | None:
     """Commands shared by replay and live consoles. Caller holds the session lock."""
     cmd = msg.get("cmd")
+    # with sign-in on, the decision log names the signed-in person, never what the browser claims
+    actor = user["display_name"][:40] if user else (str(msg.get("actor") or "").strip() or "RTOC")[:40]
     if cmd == "ack":
-        actor = user["display_name"][:40] if user else (str(msg.get("actor") or "").strip() or "RTOC")[:40]
         session.ack(msg.get("id"), actor, key=msg.get("key"), **_ack_extra(msg))
         return {"type": "tick", "samples": [], "alerts": session.alerts.pop_changed(), "status": session.status(),
                 "events": []}
     if cmd == "budget":
-        session.set_budget(float(msg.get("value", 1.0)))
+        session.set_budget(float(msg.get("value", 1.0)), actor)
         return {"type": "tick", "samples": [], "alerts": [], "status": session.status(), "events": []}
     if cmd == "handover":
         return {"type": "handover", **await asyncio.to_thread(handover_brief, session, float(msg.get("hours", 12)))}

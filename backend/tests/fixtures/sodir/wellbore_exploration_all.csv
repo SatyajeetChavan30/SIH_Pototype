@@ -1,0 +1,6 @@
+wlbWellboreName,wlbNsDecDeg,wlbEwDesDeg,wlbTotalDepth,wlbFinalVerticalDepth,wlbEntryDate,wlbField,wlbDiscovery,wlbContent,wlbStatus,wlbMainArea,wlbMaxInclation,wlbNpdidWellbore
+15/9-X1,58.44,1.88,3400,3395,12.03.1995,SAMPLEFIELD,,OIL,P&A,NORTH SEA,3.1,1
+15/9-X2,58.46,1.90,3300,3298,05.06.2001,SAMPLEFIELD,,DRY,P&A,NORTH SEA,2.0,2
+15/9-X3,58.40,1.86,3500,3497,01.02.2010,,15/9-X3 (Sample),GAS,P&A,NORTH SEA,1.5,3
+15/9-X4 A,58.45,1.89,4200,2900,01.02.2012,SAMPLEFIELD,,OIL,P&A,NORTH SEA,48,4
+34/10-X9,61.2,2.2,3000,2998,01.01.1990,,,DRY,P&A,NORTH SEA,1,5

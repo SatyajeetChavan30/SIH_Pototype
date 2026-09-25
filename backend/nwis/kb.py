@@ -9,6 +9,7 @@ import numpy as np
 
 from . import config
 from .data.synth import thrust_distance_km
+from .domain.ontology import IS_ASSAM
 from .db import DB
 from .domain.ontology import FORMATION_ORDER
 from .geo import Trajectory, haversine_km, offset_latlon
@@ -162,7 +163,8 @@ class KnowledgeBase:
 
     @staticmethod
     def thrust_km(lat: float, lon: float) -> float:
-        return thrust_distance_km(lat, lon)
+        # distance to the Naga thrust front is an Upper-Assam feature; other regions get a neutral constant
+        return thrust_distance_km(lat, lon) if IS_ASSAM else 0.0
 
 
 _KB: KnowledgeBase | None = None

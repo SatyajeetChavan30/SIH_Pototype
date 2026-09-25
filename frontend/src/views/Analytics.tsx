@@ -25,7 +25,7 @@ const METHOD_LABEL: Record<string, string> = {
 };
 
 export default function Analytics() {
-  const { fmName } = useApp();
+  const { fmName, meta } = useApp();
   const { can, authOn } = useAuth();
   const [d, setD] = useState<any>(null);
   const [rate, setRate] = useState(18);
@@ -43,7 +43,7 @@ export default function Analytics() {
   return <div className="col">
     <div>
       <h2 className="view">Analytics &amp; model evidence</h2>
-      <p className="lede">How much knowledge NWIS holds, where NPT comes from, and how well each model does. All metrics are on the synthetic Upper-Assam dataset: they validate the pipeline mechanics and must be re-measured on OIL's own reports.</p>
+      <p className="lede">How much knowledge NWIS holds, where NPT comes from, and how well each model does. {meta.synthetic ? "All metrics are on the synthetic Upper-Assam dataset: they validate the pipeline mechanics and must be re-measured on OIL's own reports." : `Metrics on real public data: ${meta.ontology.region?.label}. Incidents come from wellbore history summaries, so they are under-reported compared with daily drilling reports.`}</p>
     </div>
     <div className="kpis">
       {[["Offset wells", inv.wells], ["Documents", inv.documents], ["Pages read", inv.pages], ["OCR pages", inv.ocr_pages], ["Events extracted", inv.events],

@@ -3,6 +3,8 @@
 #   ./run.sh            install deps (first run), build demo data if missing, build UI, serve on :8000
 #   ./run.sh --rebuild  regenerate the synthetic knowledge base from scratch
 #   ./run.sh --dev      run backend (:8000) + Vite dev server (:5173) with hot reload
+#   ./run.sh --public   real public North Sea data (Sodir FactPages, NLOD) instead of the synthetic demo
+#                       (first run downloads the CSV exports; QUADRANTS=15,16 by default)
 set -euo pipefail
 cd "$(dirname "$0")"
 ROOT="$(pwd)"
@@ -23,6 +25,14 @@ fi
 if [ "${1:-}" = "--rebuild" ] || [ ! -f data/nwis.db ]; then
   echo "[nwis] building synthetic Upper-Assam knowledge base (~2 min)"
   (cd backend && python -m nwis.cli build-demo)
+fi
+
+if [ "${1:-}" = "--public" ]; then
+  export NWIS_REGION=norway NWIS_DATA_DIR="$ROOT/data_norway"
+  if [ ! -f data_norway/nwis.db ]; then
+    echo "[nwis] building the real public-data knowledge base (Sodir FactPages, NLOD)"
+    (cd backend && python -m nwis.cli build-public --download --quadrants "${QUADRANTS:-15,16}")
+  fi
 fi
 
 if [ "${1:-}" = "--dev" ]; then

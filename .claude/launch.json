@@ -12,6 +12,18 @@
       "runtimeExecutable": "cmd",
       "runtimeArgs": ["/c", "set NWIS_STREAM=wits0-listen:5501&& set NWIS_STREAM_GAP_S=60&& set NWIS_DATA_DIR=C:\\Users\\satya\\AppData\\Local\\Temp\\claude\\D--pd-chosen-one-SIH-2\\b4a3c581-0fd5-4f5b-831a-c5d2421dd88b\\scratchpad\\nwis_demo&& .venv\\Scripts\\python -m nwis.cli serve --host 127.0.0.1 --port 8766"],
       "port": 8766
+    },
+    {
+      "name": "nwis-noauth",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "set NWIS_AUTH=off&& .venv\\Scripts\\python -m nwis.cli serve --host 127.0.0.1 --port 8768"],
+      "port": 8768
+    },
+    {
+      "name": "nwis-norway",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "set NWIS_REGION=norway&& set NWIS_DATA_DIR=data_norway&& .venv\\Scripts\\python -m nwis.cli serve --host 127.0.0.1 --port 8767"],
+      "port": 8767
     }
   ]
 }

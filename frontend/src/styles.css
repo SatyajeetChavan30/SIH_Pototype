@@ -163,6 +163,8 @@ ul.brief-list { margin: 0; padding-left: 18px; line-height: 1.6; }
 }
 .struct-label { background: transparent !important; border: 0 !important; box-shadow: none !important; color: #3a3a3a !important; font-weight: 650; font-size: 11px; letter-spacing: .3px; }
 .struct-label:before { display: none; }
+/* mute the street map so hazard colours stay the loudest thing on the Offset Map */
+.basemap { filter: grayscale(0.9) contrast(0.85) brightness(1.08); }
 
 /* sign-in */
 .login-page { min-height: 100vh; display: grid; place-items: center; padding: 16px; background: var(--page); }

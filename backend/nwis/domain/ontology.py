@@ -1,13 +1,20 @@
-"""Drilling domain ontology for Upper Assam offset-well intelligence.
+"""Drilling domain ontology for offset-well intelligence.
 
 The single source of truth for formations, hazards, mitigations, causes and
 their natural-language surface forms. The synthetic data generator, the NLP
 extractor, the search engine and the UI all read from here, so the vocabulary
 stays consistent end to end.
+
+Formations are regional. NWIS_REGION picks the stratigraphic column at start-up:
+  assam   Upper Assam Shelf (synthetic demo data, default)
+  norway  Norwegian North Sea at lithostratigraphic GROUP level (real public Sodir data)
+Hazards, mitigations and the language resources are shared by all regions.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+
+from .. import config
 
 
 @dataclass(frozen=True)
@@ -21,7 +28,7 @@ class Formation:
 
 
 # Upper Assam Shelf stratigraphic column, shallow to deep (DGH / USGS 2208-D).
-FORMATIONS: list[Formation] = [
+ASSAM_FORMATIONS: list[Formation] = [
     Formation("ALLUVIUM", "Alluvium", "Recent", "Unconsolidated sand, silt and clay", "#d9c89e", ("alluvium", "alluvial")),
     Formation("DHEKIAJULI", "Dhekiajuli", "Pleistocene", "Sand, clay, pebble beds", "#e8d38a", ("dhekiajuli",)),
     Formation("NAMSANG", "Namsang", "Pliocene", "Loose sand, gravel, clay", "#f2b84b", ("namsang",)),
@@ -33,8 +40,89 @@ FORMATIONS: list[Formation] = [
     Formation("LANGPAR", "Langpar", "Paleocene", "Sandstone, shale, gas-bearing", "#9c755f", ("langpar", "langpur")),
     Formation("BASEMENT", "Basement", "Precambrian", "Granitic basement", "#7f7f7f", ("basement", "granite wash")),
 ]
+
+# Norwegian North Sea, lithostratigraphic GROUPS as reported by the Norwegian Offshore Directorate (Sodir),
+# shallow to deep. Aliases map well-known formation names to their group so narrative text resolves to a group.
+# Groups that occur only in some sub-basins (Brent in the north, Vestland in the south) both stay in the list;
+# a well simply has no top for a group it did not penetrate.
+NORWAY_FORMATIONS: list[Formation] = [
+    Formation("NORDLAND", "Nordland Gp", "Miocene-Recent", "Clays and sands (Utsira sand)", "#e8d38a",
+              ("nordland group", "nordland gp", "nordland", "utsira formation", "utsira fm", "utsira", "naust")),
+    Formation("HORDALAND", "Hordaland Gp", "Eocene-Miocene", "Mudstones, reactive clays, local sands", "#b07aa1",
+              ("hordaland group", "hordaland gp", "hordaland", "skade formation", "frigg formation", "grid formation")),
+    Formation("ROGALAND", "Rogaland Gp", "Paleocene-Eocene", "Mudstones, tuff (Balder), sands (Heimdal)", "#f28e2b",
+              ("rogaland group", "rogaland gp", "rogaland", "balder formation", "balder", "sele formation", "sele",
+               "lista formation", "lista", "vale formation", "heimdal formation", "heimdal", "hermod", "ty formation")),
+    Formation("SHETLAND", "Shetland Gp", "Late Cretaceous", "Chalk and marl", "#76b7b2",
+              ("shetland group", "shetland gp", "shetland", "chalk", "ekofisk formation", "ekofisk fm", "tor formation",
+               "hod formation", "blodoeks", "hardraade", "kyrre formation", "jorsalfare", "tryggvason")),
+    Formation("CROMER_KNOLL", "Cromer Knoll Gp", "Early Cretaceous", "Marls and calcareous claystones", "#59a14f",
+              ("cromer knoll group", "cromer knoll gp", "cromer knoll", "rodby formation", "sola formation",
+               "asgard formation", "tuxen formation", "mime formation")),
+    Formation("VIKING", "Viking Gp", "Late Jurassic", "Organic-rich shales (Draupne), Heather", "#4e79a7",
+              ("viking group", "viking gp", "draupne formation", "draupne", "heather formation", "heather")),
+    Formation("BOKNFJORD", "Boknfjord Gp", "Late Jurassic", "Marine shales (Egersund basin)", "#8cd17d",
+              ("boknfjord group", "boknfjord gp", "tau formation", "egersund formation", "flekkefjord formation",
+               "sauda formation")),
+    Formation("BRENT", "Brent Gp", "Middle Jurassic", "Deltaic sandstones and coals", "#e15759",
+              ("brent group", "brent gp", "tarbert formation", "ness formation", "etive formation", "rannoch formation",
+               "broom formation")),
+    Formation("VESTLAND", "Vestland Gp", "Middle-Late Jurassic", "Shallow-marine sandstones (Hugin, Sleipner)", "#f1ce63",
+              ("vestland group", "vestland gp", "hugin formation", "hugin", "sleipner formation", "bryne formation",
+               "sandnes formation")),
+    Formation("DUNLIN", "Dunlin Gp", "Early Jurassic", "Marine shales and sands", "#9d7660",
+              ("dunlin group", "dunlin gp", "drake formation", "cook formation", "burton formation",
+               "amundsen formation", "johansen formation")),
+    Formation("STATFJORD", "Statfjord Gp", "Triassic-Jurassic", "Fluvial sandstones", "#d4a6c8",
+              ("statfjord group", "statfjord gp", "statfjord formation", "eiriksson formation", "raude formation",
+               "nansen formation")),
+    Formation("HEGRE", "Hegre Gp", "Triassic", "Red-bed sandstones and claystones (Skagerrak)", "#ff9d9a",
+              ("hegre group", "hegre gp", "skagerrak formation", "skagerrak", "smith bank formation", "smith bank",
+               "lomvi formation", "teist formation", "lunde formation")),
+    Formation("ZECHSTEIN", "Zechstein Gp", "Late Permian", "Evaporites (salt)", "#bab0ac",
+              ("zechstein group", "zechstein gp", "zechstein", "zechstein salt")),
+    Formation("ROTLIEGEND", "Rotliegend Gp", "Early Permian", "Aeolian sandstones and volcanics", "#d37295",
+              ("rotliegend group", "rotliegend gp", "rotliegend")),
+    Formation("BASEMENT", "Basement", "Pre-Devonian", "Crystalline basement", "#7f7f7f",
+              ("basement", "crystalline basement")),
+]
+
+REGIONS = {
+    "assam": {
+        "label": "Upper Assam (synthetic demo data)", "formations": ASSAM_FORMATIONS, "default_td": "SYLHET",
+        "synthetic": True,
+        "data_notice": "All wells, reports and streams in this demo are synthetic, generated from published Upper-Assam geology.",
+        "ui": {"search_examples": ["losses in Tipam within 5 km after 2012", "what worked for losses in fractured Sylhet limestone",
+                                   "kick in lower Barail below 3000 m", "bit balling Girujan clay", "stuck pipe differential sticking",
+                                   "poor cement bond 9-5/8 casing"],
+               "ask_examples": ["Kicks in Barail within 8 km — what MW did offsets need?", "What worked for losses in Sylhet?",
+                                "Bit balling in Girujan clay after 2010", "Stuck pipe in Tipam near NDH-09"],
+               "ask_default": "What problems did offsets within 5 km have in Tipam, and what worked?",
+               "default_formation": "TIPAM", "default_radius_km": 8},
+    },
+    "norway": {
+        "label": "Norwegian North Sea (real public data, Sodir)", "formations": NORWAY_FORMATIONS, "default_td": "VESTLAND",
+        "synthetic": False,
+        "data_notice": "Real public wellbore data from the Norwegian Offshore Directorate FactPages, used under the Norwegian "
+                       "licence for Open Government data (NLOD). North Sea geology, not Assam: this checks NWIS on real records.",
+        "ui": {"search_examples": ["gas kick in Rogaland", "lost circulation in the Shetland chalk", "stuck pipe in Hordaland",
+                                   "shallow gas in Nordland", "fishing and sidetrack", "losses within 10 km after 2000"],
+               "ask_examples": ["What happened with kicks in Rogaland?", "What worked for losses in the chalk?",
+                                "Stuck pipe in Hordaland within 15 km", "Shallow gas in Nordland"],
+               "ask_default": "What drilling problems did offsets within 15 km have in Rogaland, and what worked?",
+               "default_formation": "ROGALAND", "default_radius_km": 25},
+    },
+}
+if config.REGION not in REGIONS:
+    raise ValueError(f"NWIS_REGION must be one of {sorted(REGIONS)}, got {config.REGION!r}")
+REGION = REGIONS[config.REGION]
+FORMATIONS: list[Formation] = REGION["formations"]
 FORMATION_BY_CODE = {f.code: f for f in FORMATIONS}
 FORMATION_ORDER = [f.code for f in FORMATIONS]
+SURFACE = FORMATION_ORDER[0]       # shallowest unit: every well starts in it
+BOTTOM = FORMATION_ORDER[-1]       # basement: never a drilling target
+DEFAULT_TD = REGION["default_td"]
+IS_ASSAM = config.REGION == "assam"
 
 
 @dataclass(frozen=True)
@@ -60,7 +148,10 @@ HAZARDS: list[Hazard] = [
     Hazard("STUCK", "Stuck pipe", "#6b4c9a", "Pipe could not be moved or rotated (differential, pack-off, mechanical)",
            ("stuck pipe", "pipe stuck", "string stuck", "got stuck", "differential sticking", "differentially stuck",
             "pack-off", "pack off", "packed off", "packing off", "unable to move string", "unable to rotate",
-            "could not pull free", "pipe sticking")),
+            "could not pull free", "pipe sticking",
+            # narrative phrasing in well histories / completion reports
+            "became stuck", "was stuck", "got stuck in", "stuck drill string", "drill string stuck", "stuck in hole",
+            "stuck at", "string became stuck", "pipe became stuck", "drill pipe stuck", "drillpipe stuck")),
     Hazard("TIGHT", "Tight hole / bit balling", "#edc948", "Overpull, drag, reaming needed, balled bit or BHA",
            ("tight hole", "tight spot", "tight spots", "overpull", "over pull", "o/p", "excessive drag", "high drag",
             "bit balling", "balled bit", "balled up", "balling", "reaming", "back reaming", "backreaming", "hole drag",
@@ -247,9 +338,17 @@ def formation_index(code: str) -> int:
     return FORMATION_ORDER.index(code)
 
 
+def formation_name(code: str | None) -> str:
+    """Display name that never raises (imported data can carry a unit this region's list does not know)."""
+    f = FORMATION_BY_CODE.get(code or "")
+    return f.name if f else (code or "unknown formation")
+
+
 def ontology_payload() -> dict:
     """Serialisable ontology for the frontend."""
     return {
+        "region": {"code": config.REGION, "label": REGION["label"], "synthetic": REGION["synthetic"],
+                   "data_notice": REGION["data_notice"], "default_td": DEFAULT_TD, **REGION["ui"]},
         "formations": [f.__dict__ | {"aliases": list(f.aliases)} for f in FORMATIONS],
         "hazards": [{"code": h.code, "label": h.label, "color": h.color, "description": h.description,
                      "in_ribbon": h.in_ribbon} for h in HAZARDS],

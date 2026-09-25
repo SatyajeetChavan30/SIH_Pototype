@@ -3,7 +3,7 @@ export type Hazard = "LOSS" | "KICK" | "STUCK" | "TIGHT" | "INSTAB" | "TORQUE" |
 export interface Formation { code: string; name: string; age: string; lithology: string; color: string }
 export interface HazardDef { code: Hazard; label: string; color: string; description: string; in_ribbon: boolean }
 export interface Meta {
-  ontology: { formations: Formation[]; hazards: HazardDef[]; mitigations: { code: string; hazard: string; label: string; preventive: string }[] };
+  ontology: { region?: Region; formations: Formation[]; hazards: HazardDef[]; mitigations: { code: string; hazard: string; label: string; preventive: string }[] };
   structures: { id: string; name: string; lat: number; lon: number; prod_start: number }[];
   active_well: string;
   ocr: { available: boolean; engine: string | null };
@@ -11,6 +11,8 @@ export interface Meta {
   asr?: { available: boolean; model: string | null; hint: string | null };
   top_pick_mode?: string;
   stream?: { live_available: boolean; spec: string; describe: string };
+  map_tiles?: { url: string; attribution: string };
+  synthetic?: boolean;
   build: { seed: number; seconds: number; n_wells: number; n_docs: number; ocr_pages: number } | null;
   formation_order: string[];
   ribbon_hazards: Hazard[];
@@ -95,3 +97,5 @@ export interface Brief { title: string; sections: MemoSection[]; citations: Numb
   draft_lesson?: string; status?: string; event_id?: string; period?: { t0: number; t1: number; md0: number; md1: number } }
 export interface Episode { id: string; hazard: string; label: string; md: number; onset_md?: number }
 export interface RibbonBin { md0: number; md1: number; formation: string; risk: Record<string, number> }
+export interface Region { code: string; label: string; synthetic: boolean; data_notice: string; default_td: string;
+  search_examples: string[]; ask_examples: string[]; ask_default: string; default_formation: string; default_radius_km?: number }

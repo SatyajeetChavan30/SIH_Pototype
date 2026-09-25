@@ -4,7 +4,7 @@
 
 NWIS turns decades of DDRs, WCRs and scanned reports into **cited, structured drilling knowledge**. It then uses that knowledge to warn the rig **before** the bit reaches a problem interval, by projecting offset-well events onto the active well **by formation, not measured depth**.
 
-> ⚠️ **All data in this repository's demo is SYNTHETIC.** It is generated from published Upper-Assam geology (Girujan clay, depleted Tipam sands, Barail coal and thrust-proximal overpressure, fractured Sylhet limestone). Well names are fictitious.
+> ⚠️ **All data in this repository's demo is SYNTHETIC.** It is generated from published Upper-Assam geology (Girujan clay, depleted Tipam sands, Barail coal and thrust-proximal overpressure, fractured Sylhet limestone). Well names are fictitious. A **real public-data mode** (Norwegian North Sea, Sodir FactPages, open licence) runs with `./run.sh --public`; where OIL's own data would come from, and how to request real Assam well data from DGH's National Data Repository, is in [`docs/DATA_SOURCES.md`](docs/DATA_SOURCES.md).
 
 ![Live Ops](docs/screenshots/01_live_ops.png)
 
@@ -21,7 +21,7 @@ NWIS turns decades of DDRs, WCRs and scanned reports into **cited, structured dr
 | Access | shared logins | **sign-in with field / office / admin roles**, enforced on every API call; the decision log names the signed-in person |
 | Deployment | cloud SaaS / licences | **on-prem, air-gapped, open source**; WITS-0 and WITSML adapters for eRTMAC |
 
-Full rationale: [`docs/VISION.md`](docs/VISION.md) (end goal, success metrics, staged path) · [`docs/RESEARCH.md`](docs/RESEARCH.md) (market and literature) · [`docs/SOLUTION.md`](docs/SOLUTION.md) (design, metrics, demo script, roadmap).
+Full rationale: [`docs/VISION.md`](docs/VISION.md) (end goal, success metrics, staged path) · [`docs/DATA_SOURCES.md`](docs/DATA_SOURCES.md) (data sources, public stand-ins, DGH NDR guide) · [`docs/RESEARCH.md`](docs/RESEARCH.md) (market and literature) · [`docs/SOLUTION.md`](docs/SOLUTION.md) (design, metrics, demo script, roadmap).
 
 ## Quick start
 

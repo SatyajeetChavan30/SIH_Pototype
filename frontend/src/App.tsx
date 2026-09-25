@@ -45,7 +45,8 @@ export default function App() {
       {live.status && <span className="tag num">Bit {Math.round(live.status.md).toLocaleString("en-IN")} m MD · {live.status.formation}</span>}
       <span className="tag">OCR: {meta.ocr.available ? meta.ocr.engine : "not installed"}</span>
       <span className="tag llm">LLM: {meta.llm.backend === "off" ? "off (grounded extractive)" : meta.llm.model}</span>
-      <span className="tag synthetic" title="All wells, reports and streams in this demo are synthetic, generated from published Upper-Assam geology">SYNTHETIC DEMO DATA</span>
+      {meta.synthetic ? <span className="tag synthetic" title={meta.ontology.region?.data_notice ?? "All data in this demo is synthetic"}>SYNTHETIC DEMO DATA</span>
+        : <span className="tag live" title={meta.ontology.region?.data_notice}>REAL PUBLIC DATA · Sodir (NLOD)</span>}
       {user && <span className="tag user" title={`Signed in as ${user.username}`}><b>{user.display_name}</b> <span className="muted">{roleLabel(user.role)}</span>
         <button className="linkbtn" onClick={logout}>Sign out</button></span>}
     </header>

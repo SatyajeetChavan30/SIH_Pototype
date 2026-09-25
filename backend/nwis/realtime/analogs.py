@@ -60,10 +60,12 @@ class AnalogIndex:
                              "next": [{"id": e["id"], "hazard": e["hazard"], "md": e["md"], "summary": e["summary"],
                                        "resolved": e.get("resolved"), "citation": e["citations"][0] if e["citations"] else None}
                                       for e in nxt]})
-        self.X = np.array(feats) if feats else np.zeros((0, 12 + len(FORMATION_ORDER)))
-        self.mu = self.X.mean(axis=0) if len(self.X) else 0
-        self.sd = self.X.std(axis=0) + 1e-6 if len(self.X) else 1
-        self.sd[12:] = 1.0 if len(self.X) else 1
+        width = 12 + len(FORMATION_ORDER)
+        self.X = np.array(feats) if feats else np.zeros((0, width))
+        # no offset logs at all (e.g. public data without drilling-parameter logs): an empty index, not a crash
+        self.mu = self.X.mean(axis=0) if len(self.X) else np.zeros(width)
+        self.sd = self.X.std(axis=0) + 1e-6 if len(self.X) else np.ones(width)
+        self.sd[12:] = 1.0
         self.Z = (self.X - self.mu) / self.sd
         self.meta = meta
 

@@ -12,7 +12,7 @@ import type { Bin, Profile, Recommendation } from "../types";
 export default function RiskPlanning() {
   const { can } = useAuth();
   const { meta, params, fmName, openCitation, go } = useApp();
-  const [radius, setRadius] = useState(Number(params.radius ?? 8));
+  const [radius, setRadius] = useState(Number(params.radius ?? (meta.ontology.region?.default_radius_km ?? 8)));
   const [prof, setProf] = useState<Profile | null>(null);
   const [win, setWin] = useState<any>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -40,7 +40,7 @@ export default function RiskPlanning() {
       </div>
       <div className="row wrap">
         <label className="row small" style={{ gap: 6 }}>Offset radius <select value={radius} onChange={(e) => setRadius(Number(e.target.value))}>
-          {[3, 5, 8, 10, 15].map((r) => <option key={r} value={r}>{r} km</option>)}</select></label>
+          {[3, 5, 8, 10, 15, 25, 40].map((r) => <option key={r} value={r}>{r} km</option>)}</select></label>
         {params.lat && <button className="btn sm" onClick={() => go("planning")}>Active well plan</button>}
         <a className="btn primary sm" href={briefUrl} target="_blank" rel="noreferrer">📄 Generate Offset Hazard Brief</a>
       </div>

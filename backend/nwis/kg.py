@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import networkx as nx
 
-from .domain.ontology import FORMATION_BY_CODE, HAZARD_BY_CODE, MITIGATION_BY_CODE
+from .domain.ontology import FORMATION_BY_CODE, HAZARD_BY_CODE, MITIGATION_BY_CODE, formation_name
 from .kb import KnowledgeBase
 
 
@@ -18,7 +18,7 @@ def build_graph(kb: KnowledgeBase) -> nx.MultiDiGraph:
         g.add_edge(ev, f"hazard:{e['hazard']}", rel="is_a")
         if e["formation"]:
             g.add_node(f"formation:{e['formation']}", type="formation",
-                       label=FORMATION_BY_CODE[e["formation"]].name, ref=e["formation"])
+                       label=formation_name(e["formation"]), ref=e["formation"])
             g.add_edge(ev, f"formation:{e['formation']}", rel="in")
         if e["cause"]:
             g.add_node(f"cause:{e['cause']}", type="cause", label=e["cause"], ref=e["cause"])
@@ -64,7 +64,7 @@ def summary_subgraph(kb: KnowledgeBase, formation: str | None = None, hazard: st
         hz = f"hazard:{e['hazard']}"
         node(hz, "hazard", HAZARD_BY_CODE[e["hazard"]].label, color=HAZARD_BY_CODE[e["hazard"]].color)
         if fm:
-            node(fm, "formation", FORMATION_BY_CODE[e["formation"]].name, color=FORMATION_BY_CODE[e["formation"]].color)
+            node(fm, "formation", formation_name(e["formation"]), color=getattr(FORMATION_BY_CODE.get(e["formation"]), "color", "#888888"))
             link(fm, hz, "hosts")
         if e["cause"]:
             c = f"cause:{e['cause']}"

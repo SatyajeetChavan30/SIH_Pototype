@@ -250,12 +250,18 @@ class HazardHit:
     negated: bool = False
 
 
+_KICKOFF_RE = re.compile(r"kick(?:ed)?[\s-]*off\b", re.I)
+
+
 def find_hazards(text: str) -> list[HazardHit]:
     hits: list[HazardHit] = []
     taken: list[tuple[int, int]] = []
     for rx, term, code in _HAZARD_RE:
         for m in rx.finditer(text):
             if any(not (m.end() <= a or m.start() >= b) for a, b in taken):
+                continue
+            # "kick-off (point)" / "kicked off" is directional drilling (where a sidetrack starts), not a well-control kick
+            if code == "KICK" and _KICKOFF_RE.match(text, m.start()):
                 continue
             taken.append((m.start(), m.end()))
             hits.append(HazardHit(code, term, m.start(), m.end()))
