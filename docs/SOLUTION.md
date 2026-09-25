@@ -106,7 +106,8 @@ Baselines are robust rolling medians. They reset after a mud-weight change or a 
   - Hypothetical handling means "Precautionary LCM kept ready" and "anticipated losses" are not events.
 - **Units** are normalised: m/ft, ppg/SG/pcf, bbl/hr and m³/hr, klbs/t.
 - **Hazard classification** is an ensemble of a domain lexicon (specific terms win: "losses during cementing" is CEMENT, not LOSS) and a TF-IDF + logistic-regression sentence classifier.
-- **OCR path:** strip-wise RapidOCR, digit repair ("3,2i1" → "3,211"), and domain word-segmentation to restore spaces the OCR model drops.
+- **OCR path:** the page is cut into strips at blank rows and RapidOCR detects the text lines in each strip. Each line is then recognised on its own from a padded, upright crop, **without the angle classifier**: the classifier flipped long full-width report lines to 180° and they came back empty, and tight crops made the recogniser drop word spaces. After that come digit repair inside numbers ("3,21l m" → "3,211 m", "1,O45" → "1,045", never touching words) and domain word-segmentation for any spaces still missing. Section headings and report types are matched whitespace-tolerantly ("2.CASINGPOLICY").
+- **Casing-shoe depths:** a cementing sentence that names its string ("cementing of 9-5/8\" casing") is placed at that string's shoe from master data. On poor scans a lost bullet dash can merge two complications into one record, and this stops the cementing event from borrowing the other one's depth.
 - **Consolidation:** events are merged across days and documents, keeping all citations.
 - **Confidence:** confidence below 0.7 routes an event to the review queue. Approvals become new training sentences (active learning).
 
@@ -177,7 +178,20 @@ Planners edit mud weight, ECD or casing-shoe depth per section and the offset mo
 - **Local adaptation.** The first result is zero-shot transfer from the synthetic-trained classifier. Then NWIS re-fits with k = 20, 60 and 140 labelled local report-days from *other* wells and re-scores held-out wells. This is the DrillScribe finding (see VISION.md) turned into a routine check.
 - **Status.** Volve must be downloaded after accepting Equinor's licence, so real numbers appear in Analytics only after that run. The pipeline is tested on a synthetic Volve-format fixture.
 
-### 3.18 Rig-site offline app
+### 3.18 Sign-in and roles
+- **Accounts.** Users sign in. Passwords are stored as salted PBKDF2-SHA256 hashes, and the session is an HMAC-signed, HttpOnly cookie valid for 24 hours, so a rig tablet lasts a tour plus handover. Everything is Python standard library, with no external identity service needed on an air-gapped network. SSO/LDAP is on the roadmap (§7).
+- **Roles.** One policy table (`auth.RULES`) is enforced by a middleware on every `/api/*` call and on the live WebSocket, so an endpoint cannot forget its check. The UI hides what a role cannot use.
+
+| Role | Can use |
+|---|---|
+| **field** (driller, rig site) | Live Ops and the rig view, alert acknowledgement and feedback, Offset Map, Correlation, Risk & Planning (read), Knowledge, expert memos |
+| **office** (drilling engineer, RTOC) | All of the above, plus document ingestion, the review queue, after-action review approval, the what-if planner and Analytics |
+| **admin** | All of the above, plus user management and decision-log chain verification |
+
+- **Accountability.** The decision log records the **signed-in user** for acknowledgements, verdicts, memo authorship, review decisions and after-action approvals. It no longer trusts a name typed in the browser. Sign-ins and review decisions are logged too.
+- **Demo.** `build-demo` seeds `field`, `office` and `admin` (password `demo`), and the sign-in page offers them as one-click shortcuts. `NWIS_AUTH=off` turns sign-in off for development.
+
+### 3.19 Rig-site offline app
 - **Install.** `#/rig` is a full-screen, large-type view that installs as an app from `manifest.webmanifest`.
 - **Offline shell.** A service worker precaches the app shell and serves it with no server. A few read-only API calls fall back to their cached copies.
 - **Offline picture.** The live picture (bit depth, formation, next top, MW/ECD against the window, the top alert and what worked) is kept on the device. With the link down it is shown under an **OFFLINE: last known picture from HH:MM** banner.
@@ -185,17 +199,19 @@ Planners edit mud weight, ECD or casing-shoe depth per section and the offset mo
 
 ## 4. Measured results (synthetic Upper-Assam dataset, reproducible)
 
-`python -m nwis.cli build-demo` generates the data. It is deterministic (seed 26121) and takes about 2.5 minutes. It produces **59 offset wells, 118 PDFs (4 scanned), 2,100+ pages, 133 extracted events, 119 lessons, and 1,100+ citations**.
+`python -m nwis.cli build-demo` generates the data. It is deterministic (seed 26121) and takes about 8 minutes on a 4-core machine, including the OCR evaluation. It produces **59 offset wells, 118 PDFs (4 scanned), 2,100+ pages, 132 extracted events (against 132 true events), 123 lessons, and 1,100+ citations**.
 
 | Capability | Metric | Result |
 |---|---|---|
 | Event extraction, **held-out phrasing** (ALL-CAPS rig shorthand, different units, never seen by the classifier; 14 DDRs, 30 true events) | Precision / Recall / F1 | **1.00 / 0.87 / 0.93** |
 | | Formation accuracy · depth MAE · mitigation Jaccard | 1.00 · 0.6 m · 1.00 |
-| Scanned legacy WCRs (noisy 200-dpi scans → OCR → NLP) | Event recall (8 docs) | ~56%, with low false positives. The rest is caught from the DDRs, and uncertain items go to review. |
-| Risk prediction, leave-wells-out, features from *earlier* wells only; pooled ROC-AUC | Nearest offset well (typical manual practice) | 0.585 |
+| Scanned WCRs (the same 12 reports as text PDFs and as scans → OCR → NLP; 32 true events) | Event recall · precision, text PDF (ceiling) | 1.00 · 1.00 |
+| | Standard scan (200 dpi, slight skew, noise) | **1.00 · 1.00**, 5% of characters differ from the text layer, depth MAE 0.5 m |
+| | Poor scan (150 dpi photocopy, 1° skew, heavy noise) | **0.97 · 0.97**, formation accuracy 0.77 (merged records on lost bullets) |
+| Risk prediction, leave-wells-out, features from *earlier* wells only; pooled ROC-AUC | Nearest offset well (typical manual practice) | 0.583 |
 | | Formation base rate | 0.833 |
 | | Offset evidence (Beta-Binomial) | 0.838 |
-| | **ML model (HistGB)** | **0.894** |
+| | **ML model (HistGB)** | **0.896** |
 | Mud-weight window | Tipam loss P50 for the active well vs latent truth (10.0 ppg) | **10.0 ppg** (depletion-aware fit) |
 | Live replay of NDH-21 | Hidden hazards detected | **4 / 4** |
 | | …preceded by a formation-aligned look-ahead ~150 m earlier | 3 / 4 (Tipam losses, Barail kick, Sylhet losses) |
@@ -208,10 +224,11 @@ Planners edit mud weight, ECD or casing-shoe depth per section and the offset mo
 
 **Honesty note:** these numbers validate the *pipeline mechanics* on synthetic data with known ground truth, which is why they can be measured at all. They are not field performance. The first pilot step is to re-measure them on OIL's own DDR/WCR archive (§7).
 
-`pytest` (34 tests) enforces these claims, as well as unit parsing, negation, minimum curvature, WITS-0 and WITSML parsing, the API/WebSocket surface, decision-log tamper detection, conformal false-alarm rates, physics baselines, DTW alignment, what-if isolation, memo peer review, after-action reviews and the handover brief. The live-alerting numbers come from `python -m nwis.cli evaluate-live`, which `build-demo` also runs.
+`pytest` (65 tests) enforces these claims, as well as unit parsing, negation, minimum curvature, WITS-0 and WITSML parsing, the API/WebSocket surface, decision-log tamper detection, conformal false-alarm rates, physics baselines, DTW alignment, what-if isolation, memo peer review, after-action reviews, the handover brief, OCR repairs and scan recall, and sign-in with role enforcement. The live-alerting numbers come from `python -m nwis.cli evaluate-live`, which `build-demo` also runs.
 
 ## 5. Seven-minute demo script (for judges)
 
+0. **Sign in (10 s)** as `office` (one click on the sign-in page). Mention that a `field` account sees a smaller menu and that every acknowledgement is logged under the signed-in name.
 1. **Live Ops (2 min).** "This is NDH-21 drilling in Namdang High. The ribbon is the next 320 m." Click **S1**.
    - The Tipam top is picked and the look-ahead re-anchors (Geology events panel).
    - A mud-window alert fires: *ECD ≈10.6 ppg gives P(loss) ≈65% in Tipam*.
@@ -247,7 +264,7 @@ Planners edit mud weight, ECD or casing-shoe depth per section and the offset mo
   - The live stream comes from eRTMAC via WITS-0 over TCP (listen or connect) or WITSML 1.4.1 log polling, both built (§3.16). The item and mnemonic maps are configuration, not code.
   - Master data (tops, surveys, casing, mud) comes from existing drilling databases.
   - Documents come from the DMS or file shares.
-- **Security:** no internet egress required, and role-based views. Every extracted fact is traceable to page and character span for audit.
+- **Security:** no internet egress required. Sign-in with field / office / admin roles is enforced on every API call (§3.18), and every extracted fact is traceable to page and character span for audit.
 - **Cost:** open-source stack, with no per-seat licences, unlike DELFI, DecisionSpace or SiteCom.
 - **Value (editable in Analytics):** NPT hours × rig spread rate × avoidable fraction. OIL sets the inputs; the prototype makes the assumptions explicit.
 
@@ -265,7 +282,8 @@ The staged path to full deployment, with exit criteria and target metrics, is in
 ## 8. Known limitations (stated up-front)
 
 - The demo data is synthetic, though calibrated to published Assam geology. Metrics are about mechanism, not field accuracy.
-- OCR on heavily degraded scans is partial. The design compensates with the review queue and cross-document consolidation.
+- OCR is measured on synthetic scans (a clean 200-dpi scan and a 150-dpi photocopy), not on OIL's archive. Handwriting, stamps over text, tables with ruled grids and faded carbon copies are not in the test set. The design compensates with confidence scores, the review queue and cross-document consolidation, since DDRs usually repeat what the WCR says.
+- Sign-in uses local accounts stored in the NWIS database. Production would federate with OIL's directory (SSO/LDAP), and the session secret should be set explicitly (`NWIS_SECRET`) when more than one server shares users.
 - The stuck-pipe ML model underperforms the base rate in cross-validation (0.68 vs 0.78 AUC). The blend therefore gives it weight 0, so stuck-pipe risk comes from offset evidence and the real-time risk index.
 - The alarm budget only trims non-critical alerts. Most remaining nuisance false alarms in the stress test are critical-level pit-transfer "losses", which it deliberately never hides. A pit-transfer flag from the rig would remove them.
 - DTW picked the Tipam top 49 m early because a sand streak sits inside the Girujan clay. That is why the default mode uses DTW as a QC beside the mud logger and not as the sole source.

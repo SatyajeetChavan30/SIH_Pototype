@@ -18,6 +18,7 @@ NWIS turns decades of DDRs, WCRs and scanned reports into **cited, structured dr
 | Alerts | "something is wrong" | **fused and corroborated**: the source page, what worked last time (case-mix-adjusted cure rates) and analog situations; physics-expected baselines; an RTOC-set **alarm budget** with a visible digest |
 | Accountability | none | **decision black box**: hash-chained log of every alert shown, who acknowledged it and what they said |
 | Legacy knowledge | digital data only | **NLP + OCR** over DDR/WCR PDFs and scans, with negation, units, citations and a review queue; **expert memos** (typed or voice), **after-action reviews** and cited **shift handovers** |
+| Access | shared logins | **sign-in with field / office / admin roles**, enforced on every API call; the decision log names the signed-in person |
 | Deployment | cloud SaaS / licences | **on-prem, air-gapped, open source**; WITS-0 and WITSML adapters for eRTMAC |
 
 Full rationale: [`docs/VISION.md`](docs/VISION.md) (end goal, success metrics, staged path) · [`docs/RESEARCH.md`](docs/RESEARCH.md) (market and literature) · [`docs/SOLUTION.md`](docs/SOLUTION.md) (design, metrics, demo script, roadmap).
@@ -27,9 +28,11 @@ Full rationale: [`docs/VISION.md`](docs/VISION.md) (end goal, success metrics, s
 Requirements: Python 3.10+ and Node 18+.
 
 ```bash
-./run.sh            # installs deps, builds the synthetic knowledge base (~2.5 min), builds the UI, serves it
-# open http://localhost:8000
+./run.sh            # installs deps, builds the synthetic knowledge base (~8 min on 4 cores), builds the UI, serves it
+# open http://localhost:8000 and sign in: field / office / admin, password "demo"
 ```
+
+Sign-in is on by default. A `field` account (rig site) sees Live Ops, the rig view, map, correlation, risk, knowledge and memo capture. `office` (RTOC, drilling engineer) adds ingestion, the review queue, after-action approval, the what-if planner and Analytics. `admin` adds user management. Set `NWIS_AUTH=off` to skip sign-in during development.
 
 Other modes:
 ```bash
@@ -99,6 +102,7 @@ NWIS_LLM=ollama OLLAMA_MODEL=llama3.1:8b python -m nwis.cli serve
 | ![](docs/screenshots/06_risk_planning.png) | ![](docs/screenshots/07_correlation.png) |
 | ![](docs/screenshots/08_knowledge_search.png) | ![](docs/screenshots/11_ingestion.png) |
 | ![](docs/screenshots/10_graph.png) | ![](docs/screenshots/12_analytics.png) |
+| ![](docs/screenshots/13_sign_in.png) | |
 </details>
 
 ## Repository layout
@@ -114,10 +118,11 @@ backend/nwis/
   realtime/               detectors, physics baselines, conformal alarm budget, DTW top picking, alert fusion, analog replay, live engine, replay evaluation
   kg.py report.py llm.py  knowledge graph, Offset Hazard Brief, optional Ollama with citation guard
   memory.py audit.py      shift handover + after-action reviews; hash-chained decision log
+  auth.py                 sign-in (PBKDF2 + signed cookie) and the field / office / admin access policy
   realtime/sources.py hub.py simulator.py   WITS-0 TCP / WITSML sources, shared live session, rig simulator
   validate/volve.py       real-data check on the public Equinor Volve reports
   api/main.py             FastAPI REST + /ws/live WebSocket, serves the UI
-backend/tests/            41 tests (NLP, geometry, parsers, model claims, live replay, API, vision features, live feed, public-data validation)
+backend/tests/            65 tests (NLP, OCR, geometry, parsers, model claims, live replay, API, sign-in and roles, vision features, live feed, public-data validation)
 frontend/src/             React + TypeScript views and components
 docs/                     VISION.md, RESEARCH.md, SOLUTION.md, screenshots
 ```
