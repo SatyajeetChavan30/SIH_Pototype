@@ -1,3 +1,4 @@
+import { OFFICE, useAuth } from "../auth";
 import { useEffect, useState } from "react";
 import { api, qs } from "../api";
 import { useApp } from "../context";
@@ -9,6 +10,7 @@ import { HAZARD_COLOR, HAZARD_SHORT, fmt } from "../theme";
 import type { Bin, Profile, Recommendation } from "../types";
 
 export default function RiskPlanning() {
+  const { can } = useAuth();
   const { meta, params, fmName, openCitation, go } = useApp();
   const [radius, setRadius] = useState(Number(params.radius ?? 8));
   const [prof, setProf] = useState<Profile | null>(null);
@@ -79,7 +81,8 @@ export default function RiskPlanning() {
           })()}
           {rec ? <RecommendationTable r={rec} /> : <div className="muted">Loading…</div>}
         </div>}
-        <WhatIfPanel loc={loc} sections={prof.target.sections} radius={radius} onScenario={setScenario} />
+        {can(...OFFICE) ? <WhatIfPanel loc={loc} sections={prof.target.sections} radius={radius} onScenario={setScenario} />
+          : <div className="card small muted">The what-if planner (mud weight, ECD and casing-point changes) is for office / RTOC accounts.</div>}
         <div className="card">
           <h3>Offset-derived mud-weight window <span className="sub">censored offset outcomes → P(loss|ECD), P(kick|MW), P(instability|MW)</span></h3>
           {win ? <MWWindowChart win={win} plan={win.plan} tops={win.tops} scenario={scenario} /> : <div className="muted">Loading…</div>}

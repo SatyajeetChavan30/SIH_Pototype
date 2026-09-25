@@ -1,3 +1,4 @@
+import { useAuth } from "../auth";
 import { useMemo, useState } from "react";
 import { useApp } from "../context";
 import { AlertCard, AlertDrawer } from "../components/AlertPanel";
@@ -12,6 +13,7 @@ import type { Alert } from "../types";
 const LEVEL_RANK: Record<string, number> = { critical: 3, warning: 2, watch: 1, info: 0 };
 
 export default function LiveOps() {
+  const { user } = useAuth();
   const { meta, fmName } = useApp();
   const [live, send, setMode] = useLive();
   const [sel, setSel] = useState<string | null>(null);
@@ -72,8 +74,9 @@ export default function LiveOps() {
     {load && <span className={load.within_budget ? "muted" : ""} style={{ color: load.within_budget ? undefined : LEVEL.warning.color }}>
       load {load.non_critical_per_hour}/h non-critical · {load.opened} opened in last {load.window_h} h</span>}
     <span className="muted">· on duty as</span>
-    <input type="text" value={actor} style={{ width: 120, padding: "3px 8px" }} aria-label="Your name for the decision log"
-      onChange={(e) => { setActorState(e.target.value); setActor(e.target.value || "RTOC"); }} />
+    {user ? <b title="Signed in: acknowledgements are logged under this name">{user.display_name}</b>
+      : <input type="text" value={actor} style={{ width: 120, padding: "3px 8px" }} aria-label="Your name for the decision log"
+        onChange={(e) => { setActorState(e.target.value); setActor(e.target.value || "RTOC"); }} />}
   </div>;
 
   const stream = st?.stream;

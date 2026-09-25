@@ -1,5 +1,9 @@
+/** Fired when the server says the session is missing or expired; the auth gate then shows the sign-in screen. */
+export const SIGNED_OUT_EVENT = "nwis:signed-out";
+
 export async function api<T = any>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(path, init);
+  if (r.status === 401 && !path.startsWith("/api/auth/")) window.dispatchEvent(new Event(SIGNED_OUT_EVENT));
   if (!r.ok) {
     let msg = `${r.status} ${r.statusText}`;
     try { msg = (await r.json()).detail || msg; } catch { /* keep status text */ }

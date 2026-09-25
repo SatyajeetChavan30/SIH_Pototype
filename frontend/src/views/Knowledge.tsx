@@ -1,3 +1,5 @@
+import { OFFICE, useAuth } from "../auth";
+import MemoCard from "../components/MemoCard";
 import { forceCenter, forceCollide, forceLink, forceManyBody, forceSimulation } from "d3-force";
 import { useEffect, useMemo, useState } from "react";
 import { api, qs } from "../api";
@@ -33,7 +35,10 @@ function Highlighted({ text, hl }: { text: string; hl: number[][] }) {
 
 export default function Knowledge() {
   const { params } = useApp();
-  const [tab, setTab] = useState<"search" | "ask" | "graph">(params.tab as any || "search");
+  const { can } = useAuth();
+  const [tab, setTab] = useState<"search" | "ask" | "graph" | "memo">(params.tab as any || "search");
+  const [memoRes, setMemoRes] = useState<any>(null);
+  const memoHere = !can(...OFFICE);   // office users capture memos in Ingestion; field users do it here
   return <div className="col">
     <div>
       <h2 className="view">Knowledge — institutional memory</h2>
@@ -43,10 +48,16 @@ export default function Knowledge() {
       <button className={tab === "search" ? "on" : ""} onClick={() => setTab("search")}>Search</button>
       <button className={tab === "ask" ? "on" : ""} onClick={() => setTab("ask")}>Ask NWIS</button>
       <button className={tab === "graph" ? "on" : ""} onClick={() => setTab("graph")}>Knowledge graph</button>
+      {memoHere && <button className={tab === "memo" ? "on" : ""} onClick={() => setTab("memo")}>Share know-how</button>}
     </div>
     {tab === "search" && <Search initial={params.q} />}
     {tab === "ask" && <Ask />}
     {tab === "graph" && <Graph />}
+    {tab === "memo" && memoHere && <>
+      <MemoCard onResult={setMemoRes} />
+      {memoRes && <div className="card small">Thanks. {Array.isArray(memoRes.review) ? memoRes.review.length : 0} item(s) from your memo went to the office review
+        queue. Once approved they appear in search, Ask NWIS and live recommendations, credited to you.</div>}
+    </>}
   </div>;
 }
 
@@ -104,6 +115,7 @@ function Search({ initial }: { initial?: string }) {
 
 /** After-action review: drafted from the event's reports and offset outcomes, approved into a lesson by a person. */
 function AarModal({ eventId, onClose }: { eventId: string; onClose: () => void }) {
+  const { can } = useAuth();
   const [brief, setBrief] = useState<Brief | null>(null);
   const [text, setText] = useState("");
   const [err, setErr] = useState<string | null>(null);
@@ -128,7 +140,8 @@ function AarModal({ eventId, onClose }: { eventId: string; onClose: () => void }
       style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--line-strong)", borderRadius: 8, padding: 8 }} />
     <div className="row" style={{ marginTop: 6 }}>
       {done ? <span className="small" style={{ color: "var(--good-ink)" }}>✔ Approved: this lesson now appears in search, Ask NWIS, hazard briefs and live recommendations.</span>
-        : <button className="btn sm primary" disabled={text.trim().length < 20} onClick={approve}>Approve as {getActor()} and publish lesson</button>}
+        : can(...OFFICE) ? <button className="btn sm primary" disabled={text.trim().length < 20} onClick={approve}>Approve as {getActor()} and publish lesson</button>
+          : <span className="small muted">An office engineer approves after-action reviews into lessons.</span>}
       {err && <span className="small" style={{ color: "var(--bad-ink)" }}>{err}</span>}
     </div>
   </section>} />;

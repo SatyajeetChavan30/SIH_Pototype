@@ -1,3 +1,4 @@
+import { OFFICE, roleLabel, useAuth, type Role } from "./auth";
 import { useApp, type View } from "./context";
 import { useLive } from "./live";
 import Analytics from "./views/Analytics";
@@ -9,20 +10,23 @@ import OffsetMap from "./views/OffsetMap";
 import RiskPlanning from "./views/RiskPlanning";
 import RigSite from "./views/RigSite";
 
-const NAV: { v: View; label: string; ico: string }[] = [
+const NAV: { v: View; label: string; ico: string; roles?: Role[] }[] = [
   { v: "live", label: "Live Ops", ico: "◉" },
   { v: "map", label: "Offset Map", ico: "⌖" },
   { v: "correlation", label: "Correlation", ico: "≣" },
   { v: "planning", label: "Risk & Planning", ico: "▦" },
   { v: "knowledge", label: "Knowledge", ico: "⌕" },
-  { v: "ingest", label: "Ingestion", ico: "⇪" },
-  { v: "analytics", label: "Analytics", ico: "◔" },
+  { v: "ingest", label: "Ingestion", ico: "⇪", roles: OFFICE },
+  { v: "analytics", label: "Analytics", ico: "◔", roles: OFFICE },
   { v: "rig", label: "Rig-site app", ico: "▣" },
 ];
 
 export default function App() {
-  const { view, go, meta } = useApp();
+  const { view: asked, go, meta } = useApp();
+  const { user, can, logout } = useAuth();
   const [live] = useLive();
+  const nav = NAV.filter((n) => !n.roles || can(...n.roles));
+  const view = nav.some((n) => n.v === asked) ? asked : "live";   // a view this role cannot open falls back to Live Ops
   if (view === "rig") return <main className="main rigmain"><RigSite /></main>;
   const age = live.status?.stream?.last_packet_age_s;
   const feedTag = live.mode === "live"
@@ -40,11 +44,13 @@ export default function App() {
         {live.connected ? feedTag : live.offlineSince ? "OFFLINE · showing cached picture" : "stream offline"}</span>
       {live.status && <span className="tag num">Bit {Math.round(live.status.md).toLocaleString("en-IN")} m MD · {live.status.formation}</span>}
       <span className="tag">OCR: {meta.ocr.available ? meta.ocr.engine : "not installed"}</span>
-      <span className="tag">LLM: {meta.llm.backend === "off" ? "off (grounded extractive)" : meta.llm.model}</span>
+      <span className="tag llm">LLM: {meta.llm.backend === "off" ? "off (grounded extractive)" : meta.llm.model}</span>
       <span className="tag synthetic" title="All wells, reports and streams in this demo are synthetic, generated from published Upper-Assam geology">SYNTHETIC DEMO DATA</span>
+      {user && <span className="tag user" title={`Signed in as ${user.username}`}><b>{user.display_name}</b> <span className="muted">{roleLabel(user.role)}</span>
+        <button className="linkbtn" onClick={logout}>Sign out</button></span>}
     </header>
     <nav className="nav" aria-label="Views">
-      {NAV.map((n) => <button key={n.v} className={view === n.v ? "on" : ""} onClick={() => go(n.v)}>
+      {nav.map((n) => <button key={n.v} className={view === n.v ? "on" : ""} onClick={() => go(n.v)}>
         <span className="ico" aria-hidden>{n.ico}</span>{n.label}
         {n.v === "live" && activeAlerts > 0 && <span className="badge">{activeAlerts}</span>}
       </button>)}

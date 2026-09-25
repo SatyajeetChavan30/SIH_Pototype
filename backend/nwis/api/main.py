@@ -11,12 +11,12 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 import numpy as np
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, HTTPException, Query, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .. import audit, config
+from .. import audit, auth, config
 from ..correlation import correlation_panel, default_plan, target_from_well
 from ..db import DB
 from ..domain.ontology import FORMATION_ORDER, HAZARD_BY_CODE, RIBBON_HAZARDS, ontology_payload
@@ -87,6 +87,7 @@ class State:
         if not config.DB_PATH.exists():
             return
         self.db.init()   # CREATE IF NOT EXISTS: upgrades older demo databases with new tables (decision_log)
+        auth.ensure_demo_users(self.db)
         self.kb = KnowledgeBase(self.db)
         self.model = RiskModel.load(config.MODELS_DIR / "risk_model.joblib")
         self.clf = SentenceClassifier.load(config.MODELS_DIR / "sentence_clf.joblib")
@@ -137,6 +138,30 @@ app = FastAPI(title="eRTMAC-NWIS", version="0.1.0", lifespan=lifespan,
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
+@app.middleware("http")
+async def access_control(request: Request, call_next):
+    """Every /api/* request is checked against auth.RULES; the UI shell and assets stay public."""
+    request.state.user = None
+    path = request.url.path
+    if not path.startswith("/api/") or not auth.enabled() or not S.ready:
+        return await call_next(request)
+    user = auth.user_from_token(S.db, request.cookies.get(auth.COOKIE))
+    request.state.user = user
+    if not auth.can(user, request.method, path):
+        if user is None:
+            return JSONResponse({"detail": "sign in required"}, status_code=401)
+        return JSONResponse({"detail": f"a {user['role']} account cannot do this"}, status_code=403)
+    return await call_next(request)
+
+
+def _actor(request: Request, claimed: str | None, default: str = "RTOC", n: int = 40) -> str:
+    """Who did it: the signed-in user when sign-in is on, otherwise the name the client sent."""
+    user = getattr(request.state, "user", None)
+    if user:
+        return user["display_name"][:n]
+    return (str(claimed or "").strip() or default)[:n]
+
+
 def kb() -> KnowledgeBase:
     if not S.ready:
         raise HTTPException(503, "Knowledge base not built. Run: python -m nwis.cli build-demo")
@@ -152,6 +177,48 @@ def _target(well_id: str | None, lat: float | None, lon: float | None, td_format
     if lat is None or lon is None:
         return target_from_well(k, k.active_id)
     return default_plan(k, lat, lon, td_formation, name=f"Planned well @ {lat:.4f}, {lon:.4f}")
+
+
+# ---------------------------------------------------------------------------- sign-in & users
+@app.post("/api/auth/login")
+def login(body: dict, response: Response):
+    if not S.ready:
+        raise HTTPException(503, "Knowledge base not built. Run: python -m nwis.cli build-demo")
+    user = auth.authenticate(S.db, body.get("username") or "", body.get("password") or "")
+    if user is None:
+        raise HTTPException(401, "wrong username or password")
+    response.set_cookie(auth.COOKIE, auth.issue_token(S.db, user), max_age=auth.SESSION_S, httponly=True,
+                        samesite="lax")
+    audit.append_many(S.db, [audit.make_row("sign_in", actor=user["display_name"][:40],
+                                            payload={"username": user["username"], "role": user["role"]})])
+    return {"user": user}
+
+
+@app.post("/api/auth/logout")
+def logout(response: Response):
+    response.delete_cookie(auth.COOKIE)
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+def me(request: Request):
+    user = auth.user_from_token(S.db, request.cookies.get(auth.COOKIE)) if S.ready and auth.enabled() else None
+    return {"auth": auth.enabled(), "user": user,
+            "demo_users": [{"username": u, "role": r} for u, _, r in auth.DEMO_USERS] if auth.enabled() else []}
+
+
+@app.get("/api/users")
+def users():
+    return auth.list_users(S.db)
+
+
+@app.post("/api/users")
+def add_user(body: dict):
+    try:
+        return auth.create_user(S.db, body.get("username") or "", body.get("display_name") or "",
+                                body.get("role") or "", body.get("password") or "")
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
 
 
 # ---------------------------------------------------------------------------- meta
@@ -384,10 +451,10 @@ async def ingest_sample(kind: str = "ddr"):
 
 
 @app.post("/api/memo")
-async def memo(body: dict):
+async def memo(body: dict, request: Request):
     kb()
     text = (body.get("text") or "").strip()
-    author = (body.get("author") or "").strip()
+    author = _actor(request, body.get("author"), default="", n=60)
     if len(text) < 20 or not author:
         raise HTTPException(400, "a memo needs an author and at least a sentence of text")
     title = (body.get("title") or f"Expert memo — {author}").strip()[:120]
@@ -401,8 +468,10 @@ async def memo(body: dict):
 
 
 @app.post("/api/memo/audio")
-async def memo_audio(file: UploadFile = File(...), author: str = "", well_id: str = "", lang: str = ""):
+async def memo_audio(request: Request, file: UploadFile = File(...), author: str = "", well_id: str = "",
+                     lang: str = ""):
     kb()
+    author = _actor(request, author, default="", n=60)
     if not author.strip():
         raise HTTPException(400, "author is required")
     st = asr_status()
@@ -431,13 +500,13 @@ def aar(event_id: str):
 
 
 @app.post("/api/aar/{event_id}/approve")
-def aar_approve(event_id: str, body: dict):
+def aar_approve(event_id: str, body: dict, request: Request):
     k = kb()
     text = (body.get("text") or "").strip()
     if len(text) < 20:
         raise HTTPException(400, "lesson text too short")
     try:
-        res = approve_aar(k, event_id, text, str(body.get("reviewer") or "RTOC")[:60])
+        res = approve_aar(k, event_id, text, _actor(request, body.get("reviewer"), n=60))
     except KeyError:
         raise HTTPException(404, "unknown event") from None
     S.refresh()
@@ -453,7 +522,7 @@ def review_list(status: str = "open"):
 
 
 @app.post("/api/review/{rid}")
-def review_action(rid: str, body: dict):
+def review_action(rid: str, body: dict, request: Request):
     r = S.db.one("SELECT * FROM review_queue WHERE id=?", (rid,))
     if not r:
         raise HTTPException(404, "not found")
@@ -484,6 +553,9 @@ def review_action(rid: str, body: dict):
             fb.append({"text": c["text"], "label": "NONE"})
         S.db.kv_set("verified_sentences", fb)
     S.db.execute("UPDATE review_queue SET status=? WHERE id=?", ("approved" if action == "approve" else "rejected", rid))
+    audit.append_many(S.db, [audit.make_row("review", well_id=payload.get("well_id"), actor=_actor(request, body.get("reviewer")),
+                                            payload={"review_id": rid, "kind": r["kind"], "action": action,
+                                                     "hazard": payload.get("hazard")})])
     if r["doc_id"] and not S.db.one("SELECT id FROM review_queue WHERE doc_id=? AND status='open'", (r["doc_id"],)):
         S.db.execute("UPDATE documents SET status='ingested' WHERE id=? AND kind='MEMO'", (r["doc_id"],))
     S.db.commit()
@@ -505,7 +577,7 @@ FEEDBACK_VERDICTS = ("useful", "false_alarm", "not_actionable")
 
 
 @app.post("/api/alerts/feedback")
-def alert_feedback(body: dict):
+def alert_feedback(body: dict, request: Request):
     verdict = body.get("verdict") or ("useful" if body.get("useful") else "false_alarm")
     if verdict not in FEEDBACK_VERDICTS:
         raise HTTPException(400, f"verdict must be one of {FEEDBACK_VERDICTS}")
@@ -517,7 +589,7 @@ def alert_feedback(body: dict):
              "level": body.get("level")}
     audit.append_many(S.db, [audit.make_row("feedback", session_id=body.get("session_id"),
                                             well_id=S.kb.active_id if S.kb else None, t=body.get("t"), md=body.get("md"),
-                                            alert=alert, actor=str(body.get("actor") or "RTOC")[:40],
+                                            alert=alert, actor=_actor(request, body.get("actor")),
                                             payload={"verdict": verdict, "note": body.get("note", "")})])
     return {"ok": True}
 
@@ -573,6 +645,12 @@ async def live(ws: WebSocket):
         await ws.send_json({"type": "error", "message": "knowledge base not built"})
         await ws.close()
         return
+    user = auth.user_from_token(S.db, ws.cookies.get(auth.COOKIE)) if auth.enabled() else None
+    if auth.enabled() and user is None:
+        await ws.send_json({"type": "error", "message": "sign in required"})
+        await ws.close(code=4401)
+        return
+    ws.state.user = user
     if ws.query_params.get("mode") == "live" and S.hub is not None:
         await _live_feed(ws, S.hub)
         return
@@ -611,7 +689,7 @@ async def live(ws: WebSocket):
                     await send(init_payload(session, _well_summary(S.kb.active), S.kb.active.sections))
             else:
                 async with lock:
-                    reply = await _common_command(session, msg)
+                    reply = await _common_command(session, msg, user)
                     flush_audit()
                 if reply:
                     await send(reply)
@@ -647,11 +725,12 @@ def _ack_extra(msg: dict) -> dict:
     return extra
 
 
-async def _common_command(session: LiveSession, msg: dict) -> dict | None:
+async def _common_command(session: LiveSession, msg: dict, user: dict | None = None) -> dict | None:
     """Commands shared by replay and live consoles. Caller holds the session lock."""
     cmd = msg.get("cmd")
     if cmd == "ack":
-        session.ack(msg.get("id"), str(msg.get("actor") or "RTOC")[:40], key=msg.get("key"), **_ack_extra(msg))
+        actor = user["display_name"][:40] if user else (str(msg.get("actor") or "").strip() or "RTOC")[:40]
+        session.ack(msg.get("id"), actor, key=msg.get("key"), **_ack_extra(msg))
         return {"type": "tick", "samples": [], "alerts": session.alerts.pop_changed(), "status": session.status(),
                 "events": []}
     if cmd == "budget":
@@ -678,7 +757,7 @@ async def _live_feed(ws: WebSocket, hub: LiveHub) -> None:
         while True:
             msg = json.loads(await ws.receive_text())
             async with hub.lock:
-                reply = await _common_command(hub.session, msg)
+                reply = await _common_command(hub.session, msg, ws.state.user)
                 audit.append_many(S.db, hub.session.pop_audit())
             if reply:
                 if reply["type"] == "tick":

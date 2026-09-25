@@ -42,3 +42,8 @@ ASR_MODEL = os.environ.get("NWIS_ASR_MODEL", "small")
 def ensure_dirs() -> None:
     for d in (DATA_DIR, DOCS_DIR, LOGS_DIR, MODELS_DIR, UPLOADS_DIR):
         d.mkdir(parents=True, exist_ok=True)
+
+# Sign-in and role-based access (see auth.py). NWIS_AUTH=off disables it (local development, unit tests).
+AUTH = os.environ.get("NWIS_AUTH", "on").lower() not in ("off", "0", "false", "no")
+DEMO_PASSWORD = os.environ.get("NWIS_DEMO_PASSWORD", "demo")   # seeded accounts field / office / admin
+SECRET = os.environ.get("NWIS_SECRET", "")                      # session-signing key; default: generated, kept in the DB

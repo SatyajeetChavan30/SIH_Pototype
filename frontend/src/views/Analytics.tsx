@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { roleLabel, useAuth, type Role, type User } from "../auth";
 import { useApp } from "../context";
 import { useTip } from "../components/Tip";
 import { HAZARD_COLOR, HAZARD_SHORT, fmt, riskColor } from "../theme";
@@ -25,6 +26,7 @@ const METHOD_LABEL: Record<string, string> = {
 
 export default function Analytics() {
   const { fmName } = useApp();
+  const { can, authOn } = useAuth();
   const [d, setD] = useState<any>(null);
   const [rate, setRate] = useState(18);
   const [avoid, setAvoid] = useState(20);
@@ -123,6 +125,7 @@ export default function Analytics() {
           <tbody>{d.feedback.map((f: any, i: number) => <tr key={i}><td>{HAZARD_SHORT[f.hazard] ?? f.hazard}</td><td>{f.useful ? "useful" : "false alarm / not actionable"}</td><td className="num">{f.n}</td></tr>)}</tbody></table>}
     </div>
     </div>
+    {can("admin") && authOn && <UsersCard />}
   </div>;
 }
 
@@ -204,4 +207,37 @@ function median(v: number[]): number | null {
   if (!v.length) return null;
   const s = [...v].sort((a, b) => a - b);
   return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+}
+
+/** Admin only: who can sign in, and with which role. */
+function UsersCard() {
+  const [users, setUsers] = useState<User[]>([]);
+  const [f, setF] = useState({ username: "", display_name: "", role: "field" as Role, password: "" });
+  const [msg, setMsg] = useState<string | null>(null);
+  const load = () => api<User[]>("/api/users").then(setUsers).catch((e) => setMsg(e.message));
+  useEffect(() => { load(); }, []);
+  const add = async () => {
+    setMsg(null);
+    try {
+      const u = await api<User>("/api/users", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(f) });
+      setMsg(`Added ${u.username} (${roleLabel(u.role)})`);
+      setF({ username: "", display_name: "", role: "field", password: "" });
+      load();
+    } catch (e: any) { setMsg(e.message); }
+  };
+  return <div className="card">
+    <h3>Users &amp; roles <span className="sub">field: live, map, risk, knowledge, memos · office: + ingestion, review, what-if, analytics · admin: + users, log verification</span></h3>
+    <table className="t"><thead><tr><th>Username</th><th>Name</th><th>Role</th></tr></thead>
+      <tbody>{users.map((u) => <tr key={u.username}><td>{u.username}</td><td>{u.display_name}</td><td>{roleLabel(u.role)}</td></tr>)}</tbody></table>
+    <div className="row wrap" style={{ marginTop: 8, gap: 6 }}>
+      <input type="text" placeholder="username" value={f.username} onChange={(e) => setF({ ...f, username: e.target.value })} style={{ width: 120 }} />
+      <input type="text" placeholder="display name" value={f.display_name} onChange={(e) => setF({ ...f, display_name: e.target.value })} style={{ width: 180 }} />
+      <select value={f.role} onChange={(e) => setF({ ...f, role: e.target.value as Role })}>
+        {(["field", "office", "admin"] as Role[]).map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
+      </select>
+      <input type="password" placeholder="password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} style={{ width: 120 }} />
+      <button className="btn sm primary" disabled={!f.username || f.password.length < 4} onClick={add}>Add user</button>
+      {msg && <span className="small muted">{msg}</span>}
+    </div>
+  </div>;
 }

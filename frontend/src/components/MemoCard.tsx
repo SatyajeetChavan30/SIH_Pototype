@@ -1,12 +1,14 @@
 import { useRef, useState } from "react";
 import { api } from "../api";
+import { useAuth } from "../auth";
 import { useApp } from "../context";
 import { getActor } from "../live";
 
 /** Capture a senior engineer's know-how as a typed or spoken memo. Everything extracted goes to peer review. */
 export default function MemoCard({ onResult }: { onResult: (r: any) => void }) {
   const { meta } = useApp();
-  const [author, setAuthor] = useState(getActor() === "RTOC" ? "" : getActor());
+  const { user } = useAuth();
+  const [author, setAuthor] = useState(user?.display_name ?? (getActor() === "RTOC" ? "" : getActor()));
   const [well, setWell] = useState("");
   const [text, setText] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
@@ -51,7 +53,8 @@ export default function MemoCard({ onResult }: { onResult: (r: any) => void }) {
     <div className="small muted">What a senior engineer knows that is not in any report. It is extracted like a DDR, credited to its author,
       and held for peer review before it can influence alerts or rankings.</div>
     <div className="row wrap">
-      <input type="text" placeholder="Author (required)" value={author} onChange={(e) => setAuthor(e.target.value)} style={{ width: 180 }} />
+      <input type="text" placeholder="Author (required)" value={author} onChange={(e) => setAuthor(e.target.value)} style={{ width: 180 }}
+        readOnly={!!user} title={user ? "Memos are credited to the signed-in user" : undefined} />
       <input type="text" placeholder="Well id (optional)" value={well} onChange={(e) => setWell(e.target.value.toUpperCase())} style={{ width: 140 }} />
     </div>
     <textarea value={text} onChange={(e) => setText(e.target.value)} rows={4} placeholder="e.g. In Hapjan we always lost returns in the Sylhet limestone around 3,700 m. Fine LCM never worked; only a cement plug cured it."

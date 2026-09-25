@@ -38,5 +38,5 @@ if [ ! -f frontend/dist/index.html ] || [ "${1:-}" = "--rebuild" ]; then
   (cd frontend && ( [ -d node_modules ] || npm install --no-audit --no-fund ) && npm run build)
 fi
 
-echo "[nwis] open http://localhost:${PORT:-8000}"
+echo "[nwis] open http://localhost:${PORT:-8000}  (demo sign-in: field / office / admin, password demo; NWIS_AUTH=off to skip)"
 cd backend && exec python -m nwis.cli serve --port "${PORT:-8000}"
