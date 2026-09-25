@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { api } from "../api";
 import { useApp } from "../context";
+import { getActor } from "../live";
+import DecisionTrail from "./DecisionTrail";
 import { HAZARD_COLOR, LEVEL, fmt } from "../theme";
 import type { Alert, Recommendation } from "../types";
 
@@ -27,6 +29,7 @@ export function AlertCard({ a, selected, onClick, big = false }: { a: Alert; sel
       {a.corroborated && <span className="pill" style={{ color: "#ff9d7a" }}>CORROBORATED</span>}
       {a.hazard !== "GEO" && <span className="muted">{hz(a.hazard)?.label ?? a.hazard} · confidence {fmt.pct(a.confidence)}</span>}
       {a.evidence?.length > 0 && <span className="muted">· {a.evidence.length} offset evidence</span>}
+      {a.p_value != null && <span className="muted" title="Conformal p-value: how often this well's own recent normal drilling scored this high">· p={a.p_value < 0.001 ? "<0.001" : a.p_value.toFixed(3)}</span>}
     </div>
   </div>;
 }
@@ -35,11 +38,15 @@ export function RecommendationTable({ r }: { r: Recommendation }) {
   const { openCitation, fmName } = useApp();
   if (!r) return null;
   return <div>
-    <div className="small muted" style={{ marginBottom: 6 }}>Outcome-weighted from {r.n_events} offset events ({r.scope}{r.formation ? `, ${fmName(r.formation)}` : ""}).</div>
+    <div className="small muted" style={{ marginBottom: 6 }}>Outcome-weighted from {r.n_events} offset events ({r.scope}{r.formation ? `, ${fmName(r.formation)}` : ""}).
+      Ranked by the <b>case-mix-adjusted</b> cure rate: each action is compared with what an average treatment achieved on the same severity and attempt order.</div>
     <table className="t">
-      <thead><tr><th>Action</th><th className="num">Cured</th><th className="num">1st try</th><th className="num">Median NPT</th><th>Verdict</th></tr></thead>
+      <thead><tr><th>Action</th><th className="num">Cured</th><th className="num" title="Cure rate adjusted for loss severity and whether earlier treatments had failed">Adj. rate</th><th className="num">1st try</th><th className="num">Median NPT</th><th>Verdict</th></tr></thead>
       <tbody>{r.actions.slice(0, 6).map((a) => <tr key={a.code}>
-        <td>{a.label}</td><td className="num">{a.cured}/{a.attempts}</td><td className="num">{a.first_try}</td>
+        <td>{a.label}</td><td className="num">{a.cured}/{a.attempts}</td>
+        <td className="num" title={a.cure_rate_smoothed != null ? `raw (smoothed) ${Math.round(a.cure_rate_smoothed * 100)}% → adjusted for case mix` : undefined}>
+          {a.cure_rate_adjusted != null ? fmt.pct(a.cure_rate_adjusted) : "–"}{a.confounded ? <span className="muted" title="Raw and adjusted rates differ a lot: this action was used on unusually easy or hard cases"> ⚖</span> : null}</td>
+        <td className="num">{a.first_try}</td>
         <td className="num">{a.median_npt_h != null ? `${a.median_npt_h} h` : "–"}</td>
         <td className={`verdict-${a.verdict}`}>{a.verdict === "recommended" ? "✔ recommended" : a.verdict === "avoid" ? "✖ avoid" : "~ mixed"}</td>
       </tr>)}</tbody>
@@ -54,14 +61,22 @@ export function RecommendationTable({ r }: { r: Recommendation }) {
   </div>;
 }
 
-export function AlertDrawer({ a, onClose, onAck }: { a: Alert; onClose: () => void; onAck: () => void }) {
+const VERDICT_TEXT: Record<string, string> = {
+  useful: "Thanks — marked useful", false_alarm: "Marked as false alarm (used to tune thresholds)",
+  not_actionable: "Marked as real but not actionable",
+};
+
+export function AlertDrawer({ a, onClose, onAck, sessionId }: { a: Alert; onClose: () => void; onAck: () => void; sessionId?: string | null }) {
   const { openCitation, fmName, hz } = useApp();
   const [fb, setFb] = useState<string | null>(null);
+  const [logTick, setLogTick] = useState(0);
   const L = LEVEL[a.level] ?? LEVEL.info;
-  const feedback = async (useful: boolean) => {
+  const feedback = async (verdict: "useful" | "false_alarm" | "not_actionable") => {
     await api("/api/alerts/feedback", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ alert_key: a.key, hazard: a.hazard, useful }) });
-    setFb(useful ? "Thanks — marked useful" : "Marked as false alarm (used to tune thresholds)");
+      body: JSON.stringify({ alert_id: a.id, alert_key: a.key, hazard: a.hazard, level: a.level, verdict, actor: getActor(),
+        session_id: sessionId, t: a.updated_t, md: a.md }) });
+    setFb(VERDICT_TEXT[verdict]);
+    setLogTick((n) => n + 1);
   };
   return <aside className="drawer" aria-label="Alert evidence">
     <div className="hd">
@@ -75,9 +90,10 @@ export function AlertDrawer({ a, onClose, onAck }: { a: Alert; onClose: () => vo
     <div className="bd">
       <div>{a.message}</div>
       <div className="row wrap">
-        {a.status === "active" && <button className="btn sm primary" onClick={onAck}>Acknowledge</button>}
-        <button className="btn sm" onClick={() => feedback(true)}>👍 Useful</button>
-        <button className="btn sm" onClick={() => feedback(false)}>👎 False alarm</button>
+        {a.status === "active" && <button className="btn sm primary" onClick={() => { onAck(); setTimeout(() => setLogTick((n) => n + 1), 400); }}>Acknowledge as {getActor()}</button>}
+        <button className="btn sm" onClick={() => feedback("useful")}>👍 Useful</button>
+        <button className="btn sm" onClick={() => feedback("false_alarm")}>👎 False alarm</button>
+        <button className="btn sm" onClick={() => feedback("not_actionable")}>Real, not actionable</button>
         {fb && <span className="small muted">{fb}</span>}
       </div>
 
@@ -119,6 +135,11 @@ export function AlertDrawer({ a, onClose, onAck }: { a: Alert; onClose: () => vo
             <td className="small">{x.next.length ? x.next.map((n) => <div key={n.id}><span className="swatch" style={{ background: HAZARD_COLOR[n.hazard] }} /> {n.summary}
               {n.citation && <span className="cite" onClick={() => openCitation(n.citation!)}> [src]</span>}</div>) : <span className="muted">drilled ahead without incident</span>}</td>
           </tr>)}</tbody></table>
+      </section>}
+
+      {a.source !== "look-ahead" && a.source !== "geology" && <section>
+        <h4>Decision log (black box)</h4>
+        <DecisionTrail alertId={a.id} alertKey={a.key} refresh={`${a.status}-${a.level}-${a.count}-${logTick}`} />
       </section>}
 
       {a.history?.length > 0 && <section>

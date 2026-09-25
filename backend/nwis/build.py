@@ -185,6 +185,13 @@ def build(fresh: bool = True, eval_wells: int = 14) -> dict:
     metrics = train_and_evaluate(db)
     log(f"  pooled AUC: {json.dumps({k: v.get('auc') for k, v in metrics['pooled'].items()})}")
 
+    log("replaying the active well: alarm-budget sweep and DTW top-pick accuracy")
+    from .kb import KnowledgeBase
+    from .realtime.evaluate import evaluate_live
+    from .risk.model import RiskModel
+    live = evaluate_live(KnowledgeBase(db), RiskModel.load(config.MODELS_DIR / "risk_model.joblib"))
+    log(f"  DTW top-pick MAE {live['top_picks']['dtw']['mae_m']} m")
+
     db.kv_set("build_info", {"seed": config.SEED, "seconds": round(time.time() - t0, 1), "n_wells": len(world.wells),
                              "n_docs": len(docs), "ocr_pages": ocr_pages})
     log(f"done in {time.time() - t0:.1f}s")

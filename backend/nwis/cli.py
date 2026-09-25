@@ -1,4 +1,4 @@
-"""Command line: python -m nwis.cli build-demo | serve | import-volve <dir> | eval"""
+"""Command line: python -m nwis.cli build-demo | serve | import-volve <dir> | metrics | evaluate-live"""
 from __future__ import annotations
 
 import argparse
@@ -15,6 +15,7 @@ def main() -> None:
     v = sub.add_parser("import-volve", help="ingest WITSML drillReport XML files (e.g. Equinor Volve) from a folder")
     v.add_argument("folder")
     sub.add_parser("metrics", help="print stored evaluation metrics")
+    sub.add_parser("evaluate-live", help="replay the active well: alarm-budget sweep and DTW top-pick accuracy")
     a = ap.parse_args()
     if a.cmd == "build-demo":
         from .build import build
@@ -41,7 +42,19 @@ def main() -> None:
     elif a.cmd == "metrics":
         from .db import DB
         db = DB()
-        print(json.dumps({"extraction": db.kv_get("extraction_eval"), "risk": db.kv_get("risk_metrics")}, indent=1))
+        print(json.dumps({"extraction": db.kv_get("extraction_eval"), "risk": db.kv_get("risk_metrics"),
+                          "live": db.kv_get("live_eval")}, indent=1))
+    elif a.cmd == "evaluate-live":
+        from .config import MODELS_DIR
+        from .kb import KnowledgeBase
+        from .realtime.evaluate import evaluate_live
+        from .risk.model import RiskModel
+        res = evaluate_live(KnowledgeBase(), RiskModel.load(MODELS_DIR / "risk_model.joblib"))
+        for r in res["budget"]["rows"]:
+            print(f"nuisance={r['nuisance']} budget={r['budget_per_hour']}: detected {r['detected']}/"
+                  f"{len(r['episodes'])}, false alarms {r['false_alarms']} ({r['false_per_hour']}/h)")
+        for mode, v in res["top_picks"].items():
+            print(f"top picks [{mode}]: MAE {v['mae_m']} m over {v['n']} tops; episodes {v['episodes_detected']}/{v['n_episodes']}")
 
 
 if __name__ == "__main__":

@@ -50,6 +50,11 @@ CREATE TABLE IF NOT EXISTS review_queue (
 CREATE TABLE IF NOT EXISTS alert_feedback (
   id INTEGER PRIMARY KEY AUTOINCREMENT, alert_key TEXT, hazard TEXT, useful INTEGER, note TEXT, ts TEXT);
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS decision_log (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT, ts_wall TEXT, session_id TEXT, well_id TEXT, t REAL, md REAL, alert_id TEXT,
+  alert_key TEXT, hazard TEXT, event TEXT, level TEXT, actor TEXT, payload TEXT, prev_hash TEXT, hash TEXT);
+CREATE INDEX IF NOT EXISTS ix_dlog_session ON decision_log(session_id);
+CREATE INDEX IF NOT EXISTS ix_dlog_alert ON decision_log(alert_id);
 """
 
 

@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { wsUrl } from "./api";
-import type { Alert, Episode, LiveStatus, RibbonBin, Sample, TopPred, Zone } from "./types";
+import type { Alert, Brief, Episode, LiveEvent, LiveStatus, RibbonBin, Sample, TopPred, Zone } from "./types";
 
 export interface LiveData {
   connected: boolean;
@@ -15,18 +15,29 @@ export interface LiveData {
   grid: number[];
   episodes: Episode[];
   ribbon: RibbonBin[];
-  events: { type: string; message: string; md: number; t: number }[];
+  events: LiveEvent[];
   sections: any[];
   version: number;
   autoPause: boolean;
   pausedOn: string | null;   // alert key that triggered an auto-pause
+  sessionId: string | null;  // decision-log session id
+  handover: Brief | null;    // last shift-handover brief received
+}
+
+/** Who is at the console: written into the decision log with every acknowledgement and feedback. */
+export function getActor(): string {
+  try { return localStorage.getItem("nwis.actor") || "RTOC"; } catch { return "RTOC"; }
+}
+export function setActor(v: string) {
+  try { localStorage.setItem("nwis.actor", v); } catch { /* private mode: keep default */ }
 }
 
 const MAX_SAMPLES = 480;
 
 class LiveStore {
   d: LiveData = { connected: false, playing: true, speed: 4, status: null, samples: [], alerts: new Map(), zones: [], tops: {},
-    window: {}, grid: [], episodes: [], ribbon: [], events: [], sections: [], version: 0, autoPause: true, pausedOn: null };
+    window: {}, grid: [], episodes: [], ribbon: [], events: [], sections: [], version: 0, autoPause: true, pausedOn: null,
+    sessionId: null, handover: null };
   seenCritical = new Set<string>();
   ws: WebSocket | null = null;
   subs = new Set<() => void>();
@@ -50,7 +61,7 @@ class LiveStore {
       d.playing = true;
       d.samples = []; d.alerts = new Map(); d.events = [];
       d.episodes = m.episodes; d.zones = m.zones; d.tops = m.tops; d.window = m.window; d.grid = m.grid; d.ribbon = m.ribbon;
-      d.sections = m.sections; d.status = m.status; d.pausedOn = null;
+      d.sections = m.sections; d.status = m.status; d.pausedOn = null; d.sessionId = m.session_id ?? null;
       this.seenCritical = new Set((m.alerts as Alert[]).map((a) => a.id));
       for (const a of m.alerts as Alert[]) d.alerts.set(a.key, a);
     } else if (m.type === "tick") {
@@ -71,6 +82,8 @@ class LiveStore {
       if (m.ribbon) d.ribbon = m.ribbon;
       if (m.zones) d.zones = m.zones;
       if (m.tops) d.tops = m.tops;
+    } else if (m.type === "handover") {
+      d.handover = m as Brief;
     } else if (m.type === "analogs") {
       (d as any).analogSnapshot = m;
     }
@@ -88,6 +101,8 @@ class LiveStore {
   }
   send(cmd: Record<string, unknown>) {
     if (cmd.cmd === "autoPause") { this.d.autoPause = Boolean(cmd.value); this.bump(true); return; }
+    if (cmd.cmd === "closeHandover") { this.d.handover = null; this.bump(true); return; }
+    if (cmd.cmd === "ack") cmd = { ...cmd, actor: getActor() };
     if (cmd.cmd === "play" || cmd.cmd === "jump" || cmd.cmd === "restart") { this.d.playing = true; this.d.pausedOn = null; }
     if (cmd.cmd === "pause") this.d.playing = false;
     if (cmd.cmd === "speed") this.d.speed = Number(cmd.value);

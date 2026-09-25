@@ -25,6 +25,14 @@ OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.1:8b")
 # Extraction confidence below which an item goes to the human review queue.
 REVIEW_THRESHOLD = 0.7
 
+# Live formation-top picking: "mudlogger" (lagged cuttings picks only), "dtw" (gamma-ray correlation only),
+# or "auto" (mud-logger picks drive re-anchoring; DTW runs independently as a QC and flags disagreements).
+TOP_PICK_MODE = os.environ.get("NWIS_TOP_PICK", "auto").lower()
+DTW_CONFLICT_M = 15.0   # DTW vs mud-logger difference that raises a correlation-conflict note
+
+# Optional on-prem speech-to-text for expert voice memos (pip install "nwis[asr]"; weights must be cached).
+ASR_MODEL = os.environ.get("NWIS_ASR_MODEL", "small")
+
 
 def ensure_dirs() -> None:
     for d in (DATA_DIR, DOCS_DIR, LOGS_DIR, MODELS_DIR, UPLOADS_DIR):

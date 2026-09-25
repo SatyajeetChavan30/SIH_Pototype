@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .. import config
+from .. import audit, config
 from ..correlation import correlation_panel, default_plan, target_from_well
 from ..db import DB
 from ..domain.ontology import FORMATION_ORDER, HAZARD_BY_CODE, RIBBON_HAZARDS, ontology_payload
@@ -27,6 +27,8 @@ from ..ingest.pipeline import Ingestor
 from ..kb import KnowledgeBase
 from ..kg import summary_subgraph
 from ..llm import llm_status
+from ..ingest.voice import asr_status, transcribe
+from ..memory import after_action_review, approve_aar, handover_brief
 from ..realtime.analogs import AnalogIndex
 from ..realtime.engine import LiveSession
 from ..report import hazard_brief
@@ -34,6 +36,7 @@ from ..risk.evidence import risk_profile
 from ..risk.model import RiskModel
 from ..risk.mw_window import mw_window
 from ..risk.recommend import recommend
+from ..risk.whatif import run_whatif
 from ..search.index import SearchIndex
 from ..search.qa import answer
 
@@ -80,6 +83,7 @@ class State:
     def load(self):
         if not config.DB_PATH.exists():
             return
+        self.db.init()   # CREATE IF NOT EXISTS: upgrades older demo databases with new tables (decision_log)
         self.kb = KnowledgeBase(self.db)
         self.model = RiskModel.load(config.MODELS_DIR / "risk_model.joblib")
         self.clf = SentenceClassifier.load(config.MODELS_DIR / "sentence_clf.joblib")
@@ -148,7 +152,8 @@ def health():
 def meta():
     k = kb()
     return J({"ontology": ontology_payload(), "structures": list(k.structures.values()), "active_well": k.active_id,
-              "ocr": ocr_status(), "llm": llm_status(), "build": S.db.kv_get("build_info"), "synthetic": True,
+              "ocr": ocr_status(), "llm": llm_status(), "asr": asr_status(), "build": S.db.kv_get("build_info"),
+              "synthetic": True, "top_pick_mode": config.TOP_PICK_MODE,
               "formation_order": FORMATION_ORDER, "ribbon_hazards": RIBBON_HAZARDS})
 
 
@@ -234,6 +239,12 @@ def window(well_id: str | None = None, lat: float | None = None, lon: float | No
     w["plan"] = plan
     w["tops"] = p["tops"]
     return J(w)
+
+
+@app.post("/api/risk/whatif")
+def whatif(body: dict):
+    t = _target(body.get("well_id"), body.get("lat"), body.get("lon"), body.get("td_formation") or "SYLHET")
+    return J(run_whatif(kb(), t, body.get("overrides") or {}, S.model, float(body.get("radius_km") or 8.0)))
 
 
 @app.get("/api/brief", response_class=HTMLResponse)
@@ -358,6 +369,67 @@ async def ingest_sample(kind: str = "ddr"):
     return J(res)
 
 
+@app.post("/api/memo")
+async def memo(body: dict):
+    kb()
+    text = (body.get("text") or "").strip()
+    author = (body.get("author") or "").strip()
+    if len(text) < 20 or not author:
+        raise HTTPException(400, "a memo needs an author and at least a sentence of text")
+    title = (body.get("title") or f"Expert memo — {author}").strip()[:120]
+
+    def run():
+        res = Ingestor(S.db, S.clf).ingest_text(text, title, author[:60], body.get("well_id") or None,
+                                                body.get("lang") or "en", body.get("original"))
+        S.refresh()
+        return res
+    return J(await asyncio.to_thread(run))
+
+
+@app.post("/api/memo/audio")
+async def memo_audio(file: UploadFile = File(...), author: str = "", well_id: str = "", lang: str = ""):
+    kb()
+    if not author.strip():
+        raise HTTPException(400, "author is required")
+    st = asr_status()
+    if not st["available"]:
+        raise HTTPException(501, st["hint"])
+    config.UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    dest = config.UPLOADS_DIR / f"{dt.datetime.now():%Y%m%d%H%M%S}_{Path(file.filename or 'memo.webm').name}"
+    with dest.open("wb") as f:
+        shutil.copyfileobj(file.file, f)
+    tr = await asyncio.to_thread(transcribe, dest, lang or None)
+
+    def run():
+        res = Ingestor(S.db, S.clf).ingest_text(tr["english"], f"Voice memo — {author.strip()[:60]}", author.strip()[:60],
+                                                well_id or None, tr["language"], tr["original"], source="voice-memo")
+        S.refresh()
+        return res
+    return J({"transcript": tr, **(await asyncio.to_thread(run))})
+
+
+@app.get("/api/aar/{event_id}")
+def aar(event_id: str):
+    r = after_action_review(kb(), event_id)
+    if r is None:
+        raise HTTPException(404, "unknown event")
+    return J(r)
+
+
+@app.post("/api/aar/{event_id}/approve")
+def aar_approve(event_id: str, body: dict):
+    k = kb()
+    text = (body.get("text") or "").strip()
+    if len(text) < 20:
+        raise HTTPException(400, "lesson text too short")
+    try:
+        res = approve_aar(k, event_id, text, str(body.get("reviewer") or "RTOC")[:60])
+    except KeyError:
+        raise HTTPException(404, "unknown event") from None
+    S.refresh()
+    return res
+
+
 @app.get("/api/review")
 def review_list(status: str = "open"):
     rows = S.db.query("SELECT * FROM review_queue WHERE status=? ORDER BY confidence", (status,))
@@ -373,7 +445,18 @@ def review_action(rid: str, body: dict):
         raise HTTPException(404, "not found")
     action = body.get("action")
     payload = json.loads(r["payload"])
-    if action == "approve":
+    if action not in ("approve", "reject"):
+        raise HTTPException(400, "action must be approve|reject")
+    if r["kind"] == "lesson":
+        # expert-memo lesson: approval publishes it as a cited lesson credited to its author
+        if action == "approve":
+            who = payload.get("author")
+            S.db.insert("lessons", {"id": payload["id"], "well_id": payload.get("well_id"), "hazard": payload.get("hazard"),
+                                    "formation": payload.get("formation"),
+                                    "text": payload["text"] + (f" (expert memo: {who})" if who else ""),
+                                    "doc_id": payload["doc_id"], "page_no": payload.get("page_no"),
+                                    "start": payload.get("start"), "end": payload.get("end")})
+    elif action == "approve":
         S.db.execute("UPDATE events SET status='verified', confidence=MAX(confidence, 0.95) WHERE id=?", (payload["id"],))
         # active learning: the verified sentence becomes a new training example
         fb = S.db.kv_get("verified_sentences", [])
@@ -386,22 +469,44 @@ def review_action(rid: str, body: dict):
         for c in payload.get("citations", [])[:1]:
             fb.append({"text": c["text"], "label": "NONE"})
         S.db.kv_set("verified_sentences", fb)
-    else:
-        raise HTTPException(400, "action must be approve|reject")
     S.db.execute("UPDATE review_queue SET status=? WHERE id=?", ("approved" if action == "approve" else "rejected", rid))
+    if r["doc_id"] and not S.db.one("SELECT id FROM review_queue WHERE doc_id=? AND status='open'", (r["doc_id"],)):
+        S.db.execute("UPDATE documents SET status='ingested' WHERE id=? AND kind='MEMO'", (r["doc_id"],))
     S.db.commit()
     S.refresh()
     return {"ok": True}
 
 
 # ---------------------------------------------------------------------------- analytics & feedback
+FEEDBACK_VERDICTS = ("useful", "false_alarm", "not_actionable")
+
+
 @app.post("/api/alerts/feedback")
 def alert_feedback(body: dict):
+    verdict = body.get("verdict") or ("useful" if body.get("useful") else "false_alarm")
+    if verdict not in FEEDBACK_VERDICTS:
+        raise HTTPException(400, f"verdict must be one of {FEEDBACK_VERDICTS}")
     S.db.insert("alert_feedback", {"alert_key": body.get("alert_key"), "hazard": body.get("hazard"),
-                                   "useful": int(bool(body.get("useful"))), "note": body.get("note", ""),
+                                   "useful": int(verdict == "useful"), "note": body.get("note", ""),
                                    "ts": dt.datetime.now().isoformat(timespec="seconds")}, replace=False)
     S.db.commit()
+    alert = {"id": body.get("alert_id"), "key": body.get("alert_key"), "hazard": body.get("hazard"),
+             "level": body.get("level")}
+    audit.append_many(S.db, [audit.make_row("feedback", session_id=body.get("session_id"),
+                                            well_id=S.kb.active_id if S.kb else None, t=body.get("t"), md=body.get("md"),
+                                            alert=alert, actor=str(body.get("actor") or "RTOC")[:40],
+                                            payload={"verdict": verdict, "note": body.get("note", "")})])
     return {"ok": True}
+
+
+@app.get("/api/audit")
+def audit_log(session_id: str | None = None, alert_id: str | None = None, alert_key: str | None = None, limit: int = 200):
+    return J({"rows": audit.query(S.db, session_id, alert_id, alert_key, min(limit, 2000))})
+
+
+@app.get("/api/audit/verify")
+def audit_verify():
+    return J(audit.summary(S.db))
 
 
 @app.get("/api/analytics")
@@ -433,7 +538,8 @@ def analytics():
                                    sorted(by_fm.items(), key=lambda kv: FORMATION_ORDER.index(kv[0]))],
               "events_by_period": [{"period": f"{y}-{y + 4}", **dict(c)} for y, c in sorted(by_year.items())],
               "risk_metrics": S.db.kv_get("risk_metrics"), "extraction_eval": S.db.kv_get("extraction_eval"),
-              "feedback": fb, "inventory": inv, "build": S.db.kv_get("build_info")})
+              "feedback": fb, "inventory": inv, "build": S.db.kv_get("build_info"), "audit": audit.summary(S.db),
+              "live_eval": S.db.kv_get("live_eval")})
 
 
 # ---------------------------------------------------------------------------- live (eRTMAC stream)
@@ -448,8 +554,14 @@ async def live(ws: WebSocket):
     state = {"playing": True, "speed": 4}
     lock = asyncio.Lock()   # the session is not thread-safe: never step it while a jump/reset is running
 
+    def flush_audit():
+        rows = session.pop_audit()
+        if rows:
+            audit.append_many(S.db, rows)
+
     def init_msg():
-        return {"type": "init", "well": _well_summary(S.kb.active), "episodes": session.episodes,
+        return {"type": "init", "session_id": session.session_id, "well": _well_summary(S.kb.active),
+                "episodes": session.episodes,
                 "zones": [session._zone_payload(z) | {"evidence": z["evidence"][:6]} for z in session.zones],
                 "tops": session.tops, "window": session.win["formations"], "grid": session.win["grid"],
                 "status": session.status(), "alerts": session.alerts.snapshot(),
@@ -474,9 +586,23 @@ async def live(ws: WebSocket):
                     else:
                         await asyncio.to_thread(session.reset, 0)
                     state["playing"] = True
+                    flush_audit()
                     await ws.send_text(json.dumps(_clean(init_msg()), default=_json_default))
             elif cmd == "ack":
-                session.alerts.ack(msg.get("id"))
+                async with lock:
+                    session.ack(msg.get("id"), str(msg.get("actor") or "RTOC")[:40])
+                    flush_audit()
+            elif cmd == "budget":
+                async with lock:
+                    session.set_budget(float(msg.get("value", 1.0)))
+                    flush_audit()
+                    await ws.send_text(json.dumps(_clean({"type": "tick", "samples": [], "alerts": [],
+                                                          "status": session.status(), "events": []}),
+                                                  default=_json_default))
+            elif cmd == "handover":
+                async with lock:
+                    brief = await asyncio.to_thread(handover_brief, session, float(msg.get("hours", 12)))
+                await ws.send_text(json.dumps(_clean({"type": "handover", **brief}), default=_json_default))
             elif cmd == "analogs":
                 await ws.send_text(json.dumps(_clean({"type": "analogs", **session.analog_snapshot()}), default=_json_default))
 
@@ -491,6 +617,7 @@ async def live(ws: WebSocket):
                                                               "status": session.status(), "events": []}), default=_json_default))
                     continue
                 r = await asyncio.to_thread(session.step, state["speed"])
+                flush_audit()
             tick += 1
             r["type"] = "tick"
             for smp in r["samples"]:

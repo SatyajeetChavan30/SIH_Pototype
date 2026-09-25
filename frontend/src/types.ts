@@ -8,6 +8,8 @@ export interface Meta {
   active_well: string;
   ocr: { available: boolean; engine: string | null };
   llm: { backend: string; model: string | null };
+  asr?: { available: boolean; model: string | null; hint: string | null };
+  top_pick_mode?: string;
   build: { seed: number; seconds: number; n_wells: number; n_docs: number; ocr_pages: number } | null;
   formation_order: string[];
   ribbon_hazards: Hazard[];
@@ -53,7 +55,9 @@ export interface Profile {
 export interface Recommendation {
   hazard: string; formation: string | null; scope: string; n_events: number;
   actions: { code: string; label: string; attempts: number; cured: number; cure_rate: number; first_try: string; median_npt_h: number | null;
-    verdict: "recommended" | "mixed" | "avoid"; wells: string[]; preventive: string }[];
+    verdict: "recommended" | "mixed" | "avoid"; wells: string[]; preventive: string;
+    cure_rate_smoothed?: number; cure_rate_adjusted?: number; confounded?: boolean;
+    adjustment?: { severity: string; attempt: string; n: number; k: number; pooled_rate: number }[] }[];
   preventive: { code: string; text: string; support: number | null }[];
   lessons: { id: string; well_id: string; text: string; doc_id: string; page_no: number; start: number; end: number; title?: string }[];
 }
@@ -64,13 +68,26 @@ export interface Alert {
   title: string; message: string; md: number; t: number; formation: string | null; confidence: number; drivers: Driver[]; evidence: Evidence[];
   recommendations: Recommendation | null; analogs: Analog[]; zone: Zone | null; corroborated: boolean; status: "active" | "acknowledged" | "cleared";
   updated_t: number; count: number; history: { t: number; md: number; level: string; event: string; title?: string }[];
+  p_value?: number | null; calibrated?: boolean;
 }
-export interface Sample { t: number; md: number; tvd: number; gr: number; rop: number; wob: number; rpm: number; torque: number; spp: number; flow_in: number; flow_out: number; pit: number; hookload: number; gas: number; mw: number; ecd: number; dxc: number; state: number; formation?: string }
+export interface Sample { t: number; md: number; tvd: number; gr: number; rop: number; wob: number; rpm: number; torque: number; spp: number; flow_in: number; flow_out: number; pit: number; hookload: number; gas: number; mw: number; ecd: number; dxc: number; state: number; formation?: string;
+  exp_torque?: number; exp_spp?: number; exp_hookload?: number; exp_ecd?: number }
 export interface LiveStatus {
   i: number; n: number; t: number; md: number; tvd: number; formation: string; rel: number;
   next_top: { formation: string; md: number; tvd: number; sd: number; distance_m: number } | null;
   mw: number; ecd: number; window: { min_mw: number | null; max_ecd: number | null } | null; picked: Record<string, number>;
   zones_ahead: Zone[]; progress: number; episode: string | null;
+  alert_load?: AlertLoad; budget?: BudgetState; session_id?: string; digest?: DigestItem[];
 }
+export interface AlertLoad { window_h: number; opened: number; non_critical: number; per_hour: number; non_critical_per_hour: number; budget_per_hour: number; within_budget: boolean }
+export interface BudgetState { budget_per_hour: number; alpha: number; calibrated: Record<string, boolean>; reservoir: Record<string, number>; suppressed: Record<string, number>; passed: Record<string, number> }
+export interface DigestItem { t: number; md: number; hazard: string; detector: string; level: string; title: string; message: string; p_value: number | null; reason: string }
+export interface LiveEvent { type: string; message: string; md: number; t: number; source?: string; conflict?: boolean; formation?: string }
+export interface AuditRow { seq: number; ts_wall: string; session_id: string | null; well_id: string | null; t: number | null; md: number | null;
+  alert_id: string | null; alert_key: string | null; hazard: string | null; event: string; level: string | null; actor: string; payload: Record<string, any>; hash: string }
+export interface MemoSection { heading: string; items: string[] }
+export interface NumberedCitation extends Citation { n: number; label: string }
+export interface Brief { title: string; sections: MemoSection[]; citations: NumberedCitation[]; summary: string | null; mode: string;
+  draft_lesson?: string; status?: string; event_id?: string; period?: { t0: number; t1: number; md0: number; md1: number } }
 export interface Episode { id: string; hazard: string; label: string; md: number; onset_md?: number }
 export interface RibbonBin { md0: number; md1: number; formation: string; risk: Record<string, number> }

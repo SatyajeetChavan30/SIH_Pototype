@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
 import { useApp } from "../context";
 import { AlertCard, AlertDrawer } from "../components/AlertPanel";
+import BriefModal from "../components/BriefModal";
 import DepthRibbon from "../components/DepthRibbon";
 import StripChart from "../components/StripChart";
-import { useLive } from "../live";
+import { getActor, setActor, useLive } from "../live";
 import { HAZARD_COLOR, LEVEL, fmt } from "../theme";
 import type { Alert } from "../types";
 
@@ -15,7 +16,10 @@ export default function LiveOps() {
   const [sel, setSel] = useState<string | null>(null);
   const [rig, setRig] = useState(false);
   const [showCleared, setShowCleared] = useState(true);
+  const [actor, setActorState] = useState(getActor());
   const st = live.status;
+  const budget = st?.budget?.budget_per_hour ?? 1;
+  const load = st?.alert_load;
 
   const alerts = useMemo(() => [...live.alerts.values()]
     .filter((a) => showCleared || a.status !== "cleared")
@@ -50,12 +54,25 @@ export default function LiveOps() {
     <label className="small row" style={{ gap: 4 }} title="Pause the replay whenever a new critical alert opens">
       <input type="checkbox" checked={live.autoPause} onChange={(e) => send({ cmd: "autoPause", value: e.target.checked })} /> auto-pause on critical</label>
     <button className={`btn sm ${rig ? "primary" : ""}`} onClick={() => setRig(!rig)}>{rig ? "RTOC view" : "Rig-site view"}</button>
+    <button className="btn sm" onClick={() => send({ cmd: "handover", hours: 12 })} title="Cited summary of the last 12 h for the next shift">📝 Handover brief</button>
+  </div>;
+  const budgetBar = <div className="row wrap small" style={{ gap: 8 }}>
+    <span className="muted" title="Non-critical alerts per hour this console can act on. Critical and look-ahead-corroborated alerts always show; weaker signals over budget go to the digest, never silently dropped.">Alarm budget:</span>
+    <div className="seg" role="group" aria-label="Alarm budget per hour">
+      {[0.5, 1, 2, 4].map((b) => <button key={b} className={Math.abs(budget - b) < 1e-6 ? "on" : ""} onClick={() => send({ cmd: "budget", value: b })}>{b}/h</button>)}
+    </div>
+    {load && <span className={load.within_budget ? "muted" : ""} style={{ color: load.within_budget ? undefined : LEVEL.warning.color }}>
+      load {load.non_critical_per_hour}/h non-critical · {load.opened} opened in last {load.window_h} h</span>}
+    <span className="muted">· on duty as</span>
+    <input type="text" value={actor} style={{ width: 120, padding: "3px 8px" }} aria-label="Your name for the decision log"
+      onChange={(e) => { setActorState(e.target.value); setActor(e.target.value || "RTOC"); }} />
   </div>;
 
   if (rig && st) {
     const recs = top?.recommendations?.actions.filter((x) => x.verdict === "recommended").slice(0, 2) ?? [];
     return <div className="col">
       {controls}
+      {budgetBar}
       {pausedBanner}
       <div className="rig">
         <div className="card">
@@ -72,7 +89,8 @@ export default function LiveOps() {
           </div>}
         </div>
       </div>
-      {selected && <AlertDrawer a={selected} onClose={() => setSel(null)} onAck={() => send({ cmd: "ack", id: selected.id })} />}
+      {selected && <AlertDrawer a={selected} sessionId={live.sessionId} onClose={() => setSel(null)} onAck={() => send({ cmd: "ack", id: selected.id })} />}
+      {live.handover && <BriefModal brief={live.handover} subtitle="Shift handover" onClose={() => send({ cmd: "closeHandover" })} />}
     </div>;
   }
 
@@ -84,6 +102,7 @@ export default function LiveOps() {
       </div>
       {controls}
     </div>
+    {budgetBar}
     {pausedBanner}
     {st && <div className="kpis">
       <div className="kpi"><div className="k">Bit depth</div><div className="v num">{fmt.m(st.md)}</div><div className="d num">TVD {fmt.m(st.tvd)}</div></div>
@@ -107,13 +126,14 @@ export default function LiveOps() {
         <h3>Drilling channels <span className="sub">WITS/WITSML · last {live.samples.length} samples</span></h3>
         <StripChart samples={live.samples} field="flow_out" label="Flow out" unit="%" color="#3987e5" markers={markers} />
         <StripChart samples={live.samples} field="pit" label="Active pit" unit="bbl" color="#199e70" markers={markers} />
-        <StripChart samples={live.samples} field="torque" label="Torque" unit="kft·lbf" color="#c98500" markers={markers} />
-        <StripChart samples={live.samples} field="spp" label="Standpipe pressure" unit="psi" color="#9085e9" digits={0} markers={markers} />
+        <StripChart samples={live.samples} field="torque" label="Torque" unit="kft·lbf" color="#c98500" markers={markers} expected="exp_torque" />
+        <StripChart samples={live.samples} field="spp" label="Standpipe pressure" unit="psi" color="#9085e9" digits={0} markers={markers} expected="exp_spp" />
+        <StripChart samples={live.samples} field="hookload" label="Hookload" unit="klbs" color="#5fa8ff" markers={markers} expected="exp_hookload" />
         <StripChart samples={live.samples} field="gas" label="Total gas" unit="%" color="#d95926" digits={2} markers={markers} />
         <StripChart samples={live.samples} field="dxc" label="Corrected d-exponent" unit="" color="#d55181" digits={3} markers={markers} />
         <StripChart samples={live.samples} field="rop" label="ROP" unit="m/hr" color="#8fa3b8" markers={markers} />
         <StripChart samples={live.samples} field="ecd" label="ECD" unit="ppg" color="#e66767" digits={2} markers={markers}
-          band={win && win.max_ecd ? [win.min_mw ?? 8.5, win.max_ecd] : null} />
+          band={win && win.max_ecd ? [win.min_mw ?? 8.5, win.max_ecd] : null} expected="exp_ecd" />
       </div>
       <div className="card">
         <h3>Look-ahead ribbon <span className="sub">next 320 m</span></h3>
@@ -127,12 +147,20 @@ export default function LiveOps() {
           {alerts.map((a: Alert) => <AlertCard key={a.key} a={a} selected={a.key === sel} onClick={() => setSel(a.key)} />)}
         </div>
         <div className="card">
-          <h3>Geology events</h3>
+          <h3>Geology events <span className="sub">top picks: {meta.top_pick_mode === "dtw" ? "GR correlation (DTW) only" : meta.top_pick_mode === "mudlogger" ? "mud logger" : "mud logger + DTW QC"}</span></h3>
           {live.events.length === 0 && <div className="small muted">Top picks re-anchor the look-ahead automatically.</div>}
-          {live.events.map((e, i) => <div key={i} className="small">• {e.message}</div>)}
+          {live.events.map((e, i) => <div key={i} className="small" style={{ marginTop: 2 }}>
+            {e.source === "dtw" && <span className="pill" style={{ color: e.conflict ? LEVEL.warning.color : "#57d36a", marginRight: 4 }}>{e.conflict ? "DTW CONFLICT" : "DTW"}</span>}
+            {e.message}</div>)}
         </div>
+        {(st?.digest?.length ?? 0) > 0 && <div className="card">
+          <h3>Held in digest <span className="sub">alarm budget · reviewed, not discarded</span></h3>
+          {st!.digest!.slice().reverse().map((d, i) => <div key={i} className="small" style={{ marginTop: 2 }}>
+            <span className="muted num">{fmt.m(d.md)}</span> · {d.title} <span className="muted">— {d.reason}{d.p_value != null ? `, p=${d.p_value}` : ""}</span></div>)}
+        </div>}
       </div>
     </div>
-    {selected && <AlertDrawer a={selected} onClose={() => setSel(null)} onAck={() => send({ cmd: "ack", id: selected.id })} />}
+    {selected && <AlertDrawer a={selected} sessionId={live.sessionId} onClose={() => setSel(null)} onAck={() => send({ cmd: "ack", id: selected.id })} />}
+    {live.handover && <BriefModal brief={live.handover} subtitle="Shift handover" onClose={() => send({ cmd: "closeHandover" })} />}
   </div>;
 }

@@ -4,6 +4,7 @@ import { useApp } from "../context";
 import { RecommendationTable } from "../components/AlertPanel";
 import { MWWindowChart, RiskHeatmap } from "../components/RiskCharts";
 import { HazardLegend } from "../components/Tip";
+import WhatIfPanel from "../components/WhatIfPanel";
 import { HAZARD_COLOR, HAZARD_SHORT, fmt } from "../theme";
 import type { Bin, Profile, Recommendation } from "../types";
 
@@ -15,6 +16,7 @@ export default function RiskPlanning() {
   const [err, setErr] = useState<string | null>(null);
   const [pick, setPick] = useState<{ b: Bin; h: string } | null>(null);
   const [rec, setRec] = useState<Recommendation | null>(null);
+  const [scenario, setScenario] = useState<{ formation: string; mw: number; ecd: number }[] | null>(null);
   const loc = params.lat ? { lat: params.lat, lon: params.lon } : { well_id: params.well ?? meta.active_well };
 
   useEffect(() => {
@@ -77,9 +79,10 @@ export default function RiskPlanning() {
           })()}
           {rec ? <RecommendationTable r={rec} /> : <div className="muted">Loading…</div>}
         </div>}
+        <WhatIfPanel loc={loc} sections={prof.target.sections} radius={radius} onScenario={setScenario} />
         <div className="card">
           <h3>Offset-derived mud-weight window <span className="sub">censored offset outcomes → P(loss|ECD), P(kick|MW), P(instability|MW)</span></h3>
-          {win ? <MWWindowChart win={win} plan={win.plan} tops={win.tops} /> : <div className="muted">Loading…</div>}
+          {win ? <MWWindowChart win={win} plan={win.plan} tops={win.tops} scenario={scenario} /> : <div className="muted">Loading…</div>}
           {win && <table className="t" style={{ marginTop: 8 }}><thead><tr><th>Formation</th><th className="num">Offsets</th><th>Losses</th><th>Kicks</th><th>Instability</th></tr></thead>
             <tbody>{Object.entries(win.formations as Record<string, any>).map(([c, f]) => <tr key={c}>
               <td>{fmName(c)}</td><td className="num">{f.n_offsets}</td>

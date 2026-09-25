@@ -3,6 +3,9 @@ import { useEffect, useMemo, useState } from "react";
 import { api, qs } from "../api";
 import { useApp } from "../context";
 import { useTip } from "../components/Tip";
+import BriefModal from "../components/BriefModal";
+import { getActor } from "../live";
+import type { Brief } from "../types";
 import { HAZARD_COLOR, HAZARD_SHORT, fmt } from "../theme";
 
 const EXAMPLES = [
@@ -53,6 +56,7 @@ function Search({ initial }: { initial?: string }) {
   const [types, setTypes] = useState(["event", "lesson", "passage"]);
   const [res, setRes] = useState<any>(null);
   const [busy, setBusy] = useState(false);
+  const [aar, setAar] = useState<string | null>(null);
   const run = async (qq = q) => {
     setBusy(true);
     try { setRes(await api(`/api/search?${qs({ q: qq, types: types.join(","), limit: 30 })}`)); } finally { setBusy(false); }
@@ -86,12 +90,48 @@ function Search({ initial }: { initial?: string }) {
           <span className="muted" style={{ marginLeft: "auto" }} title="lexical BM25 / semantic LSA similarity">bm25 {r.lexical} · sem {r.semantic}</span>
         </div>
         <div style={{ marginTop: 4 }}><Highlighted text={r.text} hl={r.highlights} /></div>
-        {r.citation && <div className="small" style={{ marginTop: 3 }}><span className="cite" onClick={() => openCitation(r.citation)}>
-          Source: {r.citation.title ?? r.citation.doc_id}, page {r.citation.page_no}</span></div>}
+        <div className="row small" style={{ marginTop: 3 }}>
+          {r.citation && <span className="cite" onClick={() => openCitation(r.citation)}>Source: {r.citation.title ?? r.citation.doc_id}, page {r.citation.page_no}</span>}
+          {r.type === "event" && <button className="btn sm ghost" style={{ marginLeft: "auto" }} onClick={() => setAar(r.id)}
+            title="Draft a cited after-action review and turn it into a lesson">📋 After-action review</button>}
+        </div>
       </div>)}
       {res.results.length === 0 && <div className="empty">No matches. Remove a filter chip term from the query or widen the radius.</div>}
     </div>}
+    {aar && <AarModal eventId={aar} onClose={() => setAar(null)} />}
   </div>;
+}
+
+/** After-action review: drafted from the event's reports and offset outcomes, approved into a lesson by a person. */
+function AarModal({ eventId, onClose }: { eventId: string; onClose: () => void }) {
+  const [brief, setBrief] = useState<Brief | null>(null);
+  const [text, setText] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    api<Brief>(`/api/aar/${encodeURIComponent(eventId)}`).then((b) => { setBrief(b); setText(b.draft_lesson ?? ""); setDone(b.status === "approved"); })
+      .catch((e) => setErr(e.message));
+  }, [eventId]);
+  const approve = async () => {
+    setErr(null);
+    try {
+      await api(`/api/aar/${encodeURIComponent(eventId)}/approve`, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, reviewer: getActor() }) });
+      setDone(true);
+    } catch (e: any) { setErr(e.message); }
+  };
+  if (err && !brief) return <div className="modal-bg" onClick={onClose}><div className="modal"><div className="bd empty">{err}</div></div></div>;
+  if (!brief) return <div className="modal-bg"><div className="modal"><div className="bd empty">Drafting after-action review…</div></div></div>;
+  return <BriefModal brief={brief} onClose={onClose} subtitle="After-action review draft" footer={<section>
+    <h4 className="brief-h">Lesson to publish</h4>
+    <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} disabled={done}
+      style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--line-strong)", borderRadius: 8, padding: 8 }} />
+    <div className="row" style={{ marginTop: 6 }}>
+      {done ? <span className="small" style={{ color: "#57d36a" }}>✔ Approved: this lesson now appears in search, Ask NWIS, hazard briefs and live recommendations.</span>
+        : <button className="btn sm primary" disabled={text.trim().length < 20} onClick={approve}>Approve as {getActor()} and publish lesson</button>}
+      {err && <span className="small" style={{ color: "#ff8080" }}>{err}</span>}
+    </div>
+  </section>} />;
 }
 
 function Ask() {

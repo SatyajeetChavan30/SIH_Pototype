@@ -30,6 +30,8 @@ class Alert:
     analogs: list = field(default_factory=list)
     zone: dict | None = None
     corroborated: bool = False
+    p_value: float | None = None   # conformal p-value vs this well's recent normal drilling (None = uncalibrated)
+    calibrated: bool = False
     status: str = "active"      # active | acknowledged | cleared
     updated_t: float = 0.0
     pushed_t: float = 0.0
@@ -41,10 +43,16 @@ class Alert:
 
 
 class AlertManager:
-    def __init__(self):
+    def __init__(self, on_event=None):
         self.alerts: dict[str, Alert] = {}
         self.closed: dict[str, float] = {}
         self.changed: set[str] = set()
+        # decision-log hook: on_event(alert, event, t, md, extra) for opened/escalated/cleared/acknowledged
+        self.on_event = on_event
+
+    def _log(self, a: Alert, event: str, t: float | None, md: float | None, **extra) -> None:
+        if self.on_event is not None:
+            self.on_event(a, event, t, md, extra)
 
     def upsert(self, key: str, hazard: str, source: str, level: str, title: str, message: str, md: float, t: float,
                **kw) -> Alert | None:
@@ -58,6 +66,8 @@ class AlertManager:
             a.history.append({"t": t, "md": md, "level": level, "event": "opened", "title": title})
             self.alerts[key] = a
             self.changed.add(key)
+            self._log(a, "opened", t, md, title=title, message=message, confidence=a.confidence,
+                      corroborated=a.corroborated, source=source, drivers=a.drivers[:4])
             return a
         escalate = LEVELS[level] > LEVELS[a.level]
         a.updated_t = t
@@ -75,6 +85,9 @@ class AlertManager:
                 if v not in (None, [], {}):
                     setattr(a, k, v)
             self.changed.add(key)
+            if escalate:
+                self._log(a, "escalated", t, md, title=title, message=message, confidence=a.confidence,
+                          corroborated=a.corroborated)
         return a
 
     def freeze(self, dt: float) -> None:
@@ -90,6 +103,7 @@ class AlertManager:
                 a.history.append({"t": t, "md": a.md, "level": a.level, "event": "cleared"})
                 self.closed[key] = t
                 self.changed.add(key)
+                self._log(a, "cleared", t, a.md, reason="no supporting signal for 15 min")
 
     def clear(self, key: str, t: float, reason: str) -> None:
         a = self.alerts.get(key)
@@ -98,12 +112,16 @@ class AlertManager:
             a.history.append({"t": t, "md": a.md, "level": a.level, "event": f"cleared: {reason}"})
             self.closed[key] = t
             self.changed.add(key)
+            self._log(a, "cleared", t, a.md, reason=reason)
 
-    def ack(self, alert_id: str) -> Alert | None:
+    def ack(self, alert_id: str, actor: str = "RTOC", t: float | None = None, md: float | None = None) -> Alert | None:
         for a in self.alerts.values():
             if a.id == alert_id:
                 a.status = "acknowledged"
+                a.history.append({"t": t if t is not None else a.updated_t, "md": md if md is not None else a.md,
+                                  "level": a.level, "event": f"acknowledged by {actor}"})
                 self.changed.add(a.key)
+                self._log(a, "acknowledged", t, md, actor=actor)
                 return a
         return None
 

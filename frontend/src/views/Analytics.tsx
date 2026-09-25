@@ -101,11 +101,69 @@ export default function Analytics() {
         </>}
       </div>
     </div>
+    {d.live_eval && <LiveEval ev={d.live_eval} />}
+    <div className="grid2">
+      <div className="card">
+        <h3>Decision log <span className="sub">append-only · SHA-256 hash chain</span></h3>
+        <div className="row wrap" style={{ gap: 16 }}>
+          <div className="kpi" style={{ flex: 1 }}><div className="k">Entries</div><div className="v num">{fmt.n0(d.audit.n)}</div><div className="d">{d.audit.sessions} live session(s)</div></div>
+          <div className="kpi" style={{ flex: 1 }}><div className="k">Chain verification</div>
+            <div className="v" style={{ color: d.audit.ok ? "#57d36a" : "#ff8080", fontSize: 17 }}>{d.audit.ok ? "✔ intact" : `✖ broken at #${d.audit.first_bad_seq}`}</div>
+            <div className="d mono" title={d.audit.head ?? ""}>{d.audit.head ? `head ${String(d.audit.head).slice(0, 16)}…` : "empty"}</div></div>
+        </div>
+        {Object.keys(d.audit.by_event).length > 0 && <div className="row wrap small" style={{ gap: 6, marginTop: 8 }}>
+          {Object.entries(d.audit.by_event).map(([k, v]) => <span key={k} className="chip">{k.replace(/_/g, " ")} · {String(v)}</span>)}</div>}
+        <div className="small muted" style={{ marginTop: 8 }}>Every alert shown, escalation, acknowledgement (with the person's name), clearance, engineer feedback and alarm-budget change is logged. Editing or deleting any past entry breaks the chain, so post-incident reviews and OISD audits can trust what the console showed and when.</div>
+      </div>
     <div className="card">
       <h3>Alert feedback from engineers</h3>
       {d.feedback.length === 0 ? <div className="small muted">No feedback yet — use 👍 / 👎 on alerts in Live Ops. Feedback is stored per hazard to tune thresholds.</div> :
         <table className="t"><thead><tr><th>Hazard</th><th>Verdict</th><th className="num">Count</th></tr></thead>
-          <tbody>{d.feedback.map((f: any, i: number) => <tr key={i}><td>{HAZARD_SHORT[f.hazard] ?? f.hazard}</td><td>{f.useful ? "useful" : "false alarm"}</td><td className="num">{f.n}</td></tr>)}</tbody></table>}
+          <tbody>{d.feedback.map((f: any, i: number) => <tr key={i}><td>{HAZARD_SHORT[f.hazard] ?? f.hazard}</td><td>{f.useful ? "useful" : "false alarm / not actionable"}</td><td className="num">{f.n}</td></tr>)}</tbody></table>}
+    </div>
     </div>
   </div>;
+}
+
+/** Replay evidence for the live alerting: alarm budget trade-off and automatic top picking. */
+function LiveEval({ ev }: { ev: any }) {
+  const { fmName } = useApp();
+  const rows: any[] = ev.budget.rows;
+  const stress = rows.filter((r) => r.nuisance > 0);
+  const nEp = ev.budget.n_episodes;
+  const dtw = ev.top_picks.dtw, ml = ev.top_picks.mudlogger;
+  return <div className="grid2">
+    <div className="card">
+      <h3>Alarm budget <span className="sub">replay of the active well · {rows[0]?.hours} h of drilling</span></h3>
+      <HBar fmtV={(v) => String(v)} rows={stress.map((r) => ({
+        label: r.gated ? `budget ${r.budget_per_hour}/h` : "no budget (all alerts)", value: r.false_alarms,
+        color: r.gated ? "#3987e5" : "#56626f", bold: r.budget_per_hour === 1,
+        note: `${r.detected}/${nEp} hazards caught · ${r.false_per_hour} false alarms per hour`,
+      }))} />
+      <div className="small muted" style={{ marginTop: 6 }}>False alarms under a nuisance stress test (pit transfers, flow surges, gas and stick-slip bursts injected into the replay).</div>
+      <table className="t" style={{ marginTop: 8 }}><thead><tr><th>Stream</th><th>Budget</th><th className="num">Hazards caught</th><th className="num">False alarms</th><th className="num">per hour</th></tr></thead>
+        <tbody>{rows.map((r, i) => <tr key={i}><td>{r.nuisance > 0 ? "with nuisances" : "clean"}</td><td>{r.gated ? `${r.budget_per_hour}/h` : "off"}</td>
+          <td className="num">{r.detected}/{nEp}</td><td className="num">{r.false_alarms}</td><td className="num">{r.false_per_hour}</td></tr>)}</tbody></table>
+      <div className="small muted" style={{ marginTop: 6 }}>Critical alerts and alerts corroborated by an offset look-ahead zone always show; over budget, weaker signals are held in a visible digest. Remaining false alarms are mostly critical-level pit-transfer "losses": the budget never hides a critical signal.</div>
+    </div>
+    <div className="card">
+      <h3>Automatic top picking <span className="sub">GR correlation (DTW) vs hidden truth</span></h3>
+      <div className="row wrap" style={{ gap: 12 }}>
+        <div className="kpi" style={{ flex: 1 }}><div className="k">DTW only: median |error|</div>
+          <div className="v num">{fmt.n1(median(Object.values(dtw.per_formation).map((v: any) => Math.abs(v))))} m</div><div className="d">mean {dtw.mae_m} m · worst {dtw.max_m} m · {dtw.n} tops</div></div>
+        <div className="kpi" style={{ flex: 1 }}><div className="k">Hazards still caught, DTW only</div><div className="v num">{dtw.episodes_detected}/{dtw.n_episodes}</div><div className="d">no mud-logger picks used</div></div>
+      </div>
+      <table className="t" style={{ marginTop: 8 }}><thead><tr><th>Formation top</th><th className="num">DTW error</th><th className="num">Mud logger error</th></tr></thead>
+        <tbody>{Object.entries(dtw.per_formation).map(([c, v]: any) => <tr key={c}><td>{fmName(c)}</td>
+          <td className="num" style={{ color: Math.abs(v) > 15 ? "#ff8080" : undefined }}>{v > 0 ? "+" : ""}{v} m</td>
+          <td className="num">{ml.per_formation[c] != null ? `${ml.per_formation[c]} m` : "–"}</td></tr>)}</tbody></table>
+      <div className="small muted" style={{ marginTop: 6 }}>Default mode keeps the mud-logger pick in charge and runs DTW as an independent QC that flags disagreements. Large errors (red) come from sand streaks inside clays; the synthetic mud-logger picks are near-perfect by construction.</div>
+    </div>
+  </div>;
+}
+
+function median(v: number[]): number | null {
+  if (!v.length) return null;
+  const s = [...v].sort((a, b) => a - b);
+  return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
 }

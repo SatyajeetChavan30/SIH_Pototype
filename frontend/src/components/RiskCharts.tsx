@@ -59,7 +59,8 @@ export function RiskHeatmap({ bins, hazards, zones, sections, tops, height = 760
 }
 
 /** Mud-weight window vs depth: offset-derived bounds per formation against the planned MW/ECD. */
-export function MWWindowChart({ win, plan, tops, height = 420 }: { win: any; plan: { formation: string; top_md: number; mw: number; ecd: number }[]; tops: Record<string, TopPred>; height?: number }) {
+export function MWWindowChart({ win, plan, tops, height = 420, scenario }: { win: any; plan: { formation: string; top_md: number; mw: number; ecd: number }[]; tops: Record<string, TopPred>; height?: number;
+  scenario?: { formation: string; mw: number; ecd: number }[] | null }) {
   const { fmName } = useApp();
   const [tip, show, hide] = useTip();
   const W = 520, left = 52, right = 12, top = 18, bot = 30;
@@ -88,6 +89,9 @@ export function MWWindowChart({ win, plan, tops, height = 420 }: { win: any; pla
           {f.window.max_ecd && <line x1={x(f.window.max_ecd)} x2={x(f.window.max_ecd)} y1={y(a)} y2={y(b)} stroke="#3987e5" strokeWidth={2} />}
           <line x1={x(p.mw)} x2={x(p.mw)} y1={y(a)} y2={y(b)} stroke="#f3f6f9" strokeWidth={2} />
           <line x1={x(p.ecd)} x2={x(p.ecd)} y1={y(a)} y2={y(b)} stroke="#f3f6f9" strokeWidth={1.5} strokeDasharray="4 3" />
+          {(() => { const sc = scenario?.find((q) => q.formation === p.formation); return sc && <>
+            <line x1={x(sc.mw)} x2={x(sc.mw)} y1={y(a)} y2={y(b)} stroke="#fab219" strokeWidth={2.5} />
+            <line x1={x(sc.ecd)} x2={x(sc.ecd)} y1={y(a)} y2={y(b)} stroke="#fab219" strokeWidth={1.5} strokeDasharray="4 3" /></>; })()}
           <line x1={left} x2={W - right} y1={y(a)} y2={y(a)} stroke="var(--line-strong)" strokeWidth={0.8} />
           <text x={left - 6} y={y(a) + 11} fontSize={9.5} fill="var(--ink-2)" textAnchor="end">{fmName(p.formation).split(" ")[0]}</text>
         </g>;
@@ -98,6 +102,7 @@ export function MWWindowChart({ win, plan, tops, height = 420 }: { win: any; pla
       <span style={{ color: "#d95926" }}>━ min MW (kick / collapse)</span>
       <span style={{ color: "#3987e5" }}>━ max ECD (induced losses)</span>
       <span>━ planned MW</span><span>┅ planned ECD</span>
+      {scenario && <span style={{ color: "#fab219" }}>━ / ┅ what-if MW / ECD</span>}
     </div>
     {tip}
   </div>;

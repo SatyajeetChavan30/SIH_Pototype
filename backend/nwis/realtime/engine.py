@@ -7,9 +7,11 @@ and the whole look-ahead is re-anchored to the actual tops.
 """
 from __future__ import annotations
 
+import uuid
+
 import numpy as np
 
-from .. import config
+from .. import audit, config
 from ..correlation import formation_at, target_from_well
 from ..domain.ontology import FORMATION_BY_CODE, FORMATION_ORDER, HAZARD_BY_CODE
 from ..kb import KnowledgeBase
@@ -17,8 +19,10 @@ from ..risk.evidence import risk_profile
 from ..risk.mw_window import check_against_window, mw_window
 from ..risk.recommend import recommend
 from .analogs import AnalogIndex, live_features
+from .calibrate import DEFAULT_BUDGET, OnlineConformal
 from .detectors import DetectorBank, Signal
 from .fusion import AlertManager
+from .toppick import DTWTopPicker, next_formation
 
 LOOKAHEAD_M = 150.0
 ZONE_THRESHOLD = 0.25
@@ -33,6 +37,10 @@ class LiveSession:
         self.kb = kb
         self.model = model
         self.analogs = analog_index
+        self.session_id = uuid.uuid4().hex[:12]
+        self.audit_buffer: list[dict] = []   # decision-log rows, flushed to the DB by the API layer
+        self._emit = True
+        self.budget = DEFAULT_BUDGET
         z = np.load(config.LOGS_DIR / "active_stream.npz")
         self.data = {k: z[k] for k in z.files}
         self.n = len(self.data["t"])
@@ -44,17 +52,33 @@ class LiveSession:
     def reset(self, start_idx: int = 0) -> None:
         self.i = 0
         self.det = DetectorBank()
-        self.alerts = AlertManager()
+        self.conformal = OnlineConformal(self.budget)
+        self._gate_of: dict[str, str] = {}          # alert key -> conformal detector key
+        self.digest: list[dict] = []                # signals held back by the alarm budget (still visible)
+        self._digest_last: dict[str, float] = {}
+        self.opened: list[tuple[float, str]] = []   # (t, level) of real-time alerts opened, for alert-load
+        self.alerts = AlertManager(on_event=self._audit)
         self.picked: dict[str, float] = {}
         self.pending_picks: list[tuple[int, str, float]] = []
         self.prev_fm = None
         self.prev_t: float | None = None
         self.recent: list[dict] = []
         self.events_log: list[dict] = []
+        self.history_events: list[dict] = []   # never popped: geology events for the shift-handover brief
         self.last_analog_md = -1e9
         self.analog_result: dict | None = None
         self.target = target_from_well(self.kb, self.well.id)
         self._recompute_profile(announce=False)
+        # formation-top picking: prognosis kept un-anchored so DTW stays independent of the mud-logger picks
+        self.prior_tops = {k: dict(v) for k, v in self.tops.items()}
+        self.top_mode = config.TOP_PICK_MODE
+        self.dtw_picks: list[dict] = []
+        self.dtw_done = {c for c, v in self.prior_tops.items() if v["tvd"] < float(self.data["tvd"][0]) - 20}
+        self.toppicker = None
+        if self.top_mode in ("dtw", "auto"):
+            if not hasattr(self, "_dtw_refs"):
+                self._dtw_refs = DTWTopPicker(self.kb, self.well.lat, self.well.lon, {self.well.id}).refs
+            self.toppicker = DTWTopPicker(self.kb, self.well.lat, self.well.lon, {self.well.id}, refs=self._dtw_refs)
         self.win = mw_window(self.kb, self.target, 10.0)
         self.last_window_check_md = -1e9
         if start_idx > 0:
@@ -74,10 +98,76 @@ class LiveSession:
 
     def fast_forward(self, idx: int) -> None:
         """Advance silently (warm-up) to idx; alerts raised during warm-up are discarded."""
+        self._emit = False
         while self.i < min(idx, self.n):
             self._step_one(emit=False)
-        self.alerts = AlertManager()
+        self._emit = True
+        self.alerts = AlertManager(on_event=self._audit)
+        self._gate_of.clear()
+        self.opened.clear()
+        self.digest.clear()
+        self._digest_last.clear()
         self.events_log.clear()
+        self.history_events.clear()
+        self.audit_buffer.append(audit.make_row("session_jump", session_id=self.session_id, well_id=self.well.id,
+                                                t=self.data["t"][max(self.i - 1, 0)], md=self.data["md"][max(self.i - 1, 0)],
+                                                payload={"start_index": int(idx)}))
+
+    def set_budget(self, alarms_per_hour: float) -> None:
+        self.budget = float(alarms_per_hour)
+        self.conformal.set_budget(self.budget)
+        s = self.recent[-1] if self.recent else None
+        self.audit_buffer.append(audit.make_row("budget_changed", session_id=self.session_id, well_id=self.well.id,
+                                                t=s["t"] if s else None, md=s["md"] if s else None, actor="RTOC",
+                                                payload={"alarms_per_hour": self.conformal.budget,
+                                                         "alpha": self.conformal.alpha}))
+
+    def _opened_last_hour(self, t: float) -> int:
+        return sum(1 for t0, lv in self.opened if t0 >= t - 3600 and lv != "critical")
+
+    def _to_digest(self, sig: Signal, s: dict, p: float | None, why: str) -> None:
+        """Held-back signals stay visible in a digest and in the decision log (at most once per detector per 15 min)."""
+        key = f"{sig.hazard}:{sig.detector}"
+        last = self._digest_last.get(key)
+        if last is not None and s["t"] - last < 900:
+            return
+        self._digest_last[key] = s["t"]
+        item = {"t": s["t"], "md": round(s["md"], 1), "hazard": sig.hazard, "detector": sig.detector, "level": sig.level,
+                "title": sig.title, "message": sig.message, "p_value": None if p is None else round(p, 4), "reason": why}
+        self.digest.append(item)
+        del self.digest[:-50]
+        if self._emit:
+            self.audit_buffer.append(audit.make_row("held_in_digest", session_id=self.session_id, well_id=self.well.id,
+                                                    t=s["t"], md=s["md"],
+                                                    alert={"key": f"RT:{sig.hazard}:{sig.detector}", "hazard": sig.hazard,
+                                                           "level": sig.level}, payload=item))
+
+    def alert_load(self, window_h: float = 6.0) -> dict:
+        t_now = self.recent[-1]["t"] if self.recent else 0.0
+        recent = [lv for t, lv in self.opened if t >= t_now - window_h * 3600]
+        span = max(min(window_h, t_now / 3600), 0.25)
+        non_crit = sum(1 for lv in recent if lv != "critical")
+        return {"window_h": round(span, 2), "opened": len(recent), "non_critical": non_crit,
+                "per_hour": round(len(recent) / span, 2), "non_critical_per_hour": round(non_crit / span, 2),
+                "budget_per_hour": self.conformal.budget,
+                "within_budget": non_crit / span <= self.conformal.budget + 1e-9}
+
+    def _audit(self, alert, event: str, t, md, extra: dict) -> None:
+        if event == "opened" and alert.source in ("real-time", "fused"):
+            self.opened.append((alert.t, alert.level))
+        if not self._emit:
+            return
+        actor = extra.pop("actor", "NWIS")
+        self.audit_buffer.append(audit.make_row(event, session_id=self.session_id, well_id=self.well.id, t=t, md=md,
+                                                alert=alert.to_dict(), actor=actor, payload=extra))
+
+    def pop_audit(self) -> list[dict]:
+        out, self.audit_buffer = self.audit_buffer, []
+        return out
+
+    def ack(self, alert_id: str, actor: str = "RTOC"):
+        s = self.recent[-1] if self.recent else None
+        return self.alerts.ack(alert_id, actor, s["t"] if s else None, s["md"] if s else None)
 
     def jump_to_episode(self, ep_id: str) -> None:
         ep = next((e for e in self.episodes if e["id"] == ep_id), None)
@@ -111,23 +201,44 @@ class LiveSession:
         s = self.sample(self.i)
         fm_true = FORMATION_ORDER[int(self.data["fm"][self.i])]
         # mud-logger top pick (truth revealed with lag, as in real operations)
-        if self.prev_fm is not None and fm_true != self.prev_fm and fm_true not in self.picked:
+        if self.top_mode != "dtw" and self.prev_fm is not None and fm_true != self.prev_fm and fm_true not in self.picked:
             self.pending_picks.append((self.i + PICK_LAG_SAMPLES, fm_true, s["tvd"]))
         self.prev_fm = fm_true
         for pk in list(self.pending_picks):
             if self.i >= pk[0]:
                 self.pending_picks.remove(pk)
                 self._pick_top(pk[1], pk[2], s)
+        if self.toppicker is not None:
+            self.toppicker.add(s)
+            self._dtw_step(s)
         fm_est, rel = formation_at(self.tops, s["tvd"], self.kb)
         s["fm_est"] = FORMATION_ORDER.index(fm_est)
         s["formation"] = fm_est
+        s["inc"] = float(self.target.traj.inc_at_md(s["md"]))
         self.recent.append(s)
         if len(self.recent) > 120:
             self.recent.pop(0)
         signals = self.det.update(s)
         keep = set()
+        self.conformal.update(self.det.scores)
         for sig in signals:
-            keep.add(self._handle_signal(sig, s))
+            gate = sig.extra.get("gate")
+            p, why = None, None
+            if gate is not None:
+                existing = self.alerts.alerts.get(f"RT:{sig.hazard}:{sig.detector}")
+                if existing is not None and existing.status != "cleared":
+                    p = self.conformal.p_value(gate[0])       # already on the console: keep it updated
+                else:
+                    corroborated = self.alerts.active_lookahead(sig.hazard, s["md"]) is not None
+                    allow, p, why = self.conformal.gate(gate[0], sig.level, corroborated,
+                                                        self._opened_last_hour(s["t"]))
+                    if not allow:
+                        self._to_digest(sig, s, p, why)
+                        continue
+            keep.add(self._handle_signal(sig, s, p, gate[0] if gate else None))
+        alarming = {g for k, g in self._gate_of.items()
+                    if k in self.alerts.alerts and self.alerts.alerts[k].status != "cleared"}
+        self.conformal.observe(alarming)
         self._lookahead(s)
         if s["md"] - self.last_window_check_md > 40 and s["state"] == 0:
             self.last_window_check_md = s["md"]
@@ -140,7 +251,43 @@ class LiveSession:
         return s
 
     # ------------------------------------------------------------------ pieces
-    def _pick_top(self, code: str, tvd: float, s: dict) -> None:
+    def _dtw_step(self, s: dict) -> None:
+        """Gamma-ray correlation (DTW) against offsets: auto-pick (mode 'dtw') or independent QC (mode 'auto')."""
+        code = next_formation(dict.fromkeys(self.dtw_done, 0.0), self.prior_tops, s["tvd"])
+        if code is None:
+            return
+        prior = self.tops[code] if self.top_mode == "dtw" else self.prior_tops[code]
+        p = self.toppicker.try_pick(code, prior["tvd"], prior["sd"], s["tvd"])
+        if p is None:
+            return
+        self.dtw_done.add(code)
+        name = FORMATION_BY_CODE[code].name
+        rec = {k: p[k] for k in ("formation", "tvd", "sd", "n_refs", "refs")} | {"md": round(s["md"], 1), "t": s["t"]}
+        self.dtw_picks.append(rec)
+        if self.top_mode == "dtw":
+            self._pick_top(code, p["tvd"], s, source="dtw", info=p)
+            return
+        ml = self.picked.get(code)
+        if ml is None:
+            msg = (f"GR correlation (DTW, {p['n_refs']} offsets) puts the {name} top at {p['tvd']:,.0f} ± {p['sd']:.0f} m TVD; "
+                   f"awaiting mud-logger pick")
+            conflict = False
+        else:
+            delta = p["tvd"] - ml
+            conflict = abs(delta) > config.DTW_CONFLICT_M
+            msg = (f"GR correlation (DTW, {p['n_refs']} offsets) {'DISAGREES with' if conflict else 'confirms'} the {name} "
+                   f"mud-logger pick: {p['tvd']:,.0f} vs {ml:,.0f} m TVD ({delta:+.0f} m)")
+            rec["delta_vs_mudlogger"] = round(delta, 1)
+        ev = {"type": "dtw_check", "formation": code, "tvd": p["tvd"], "sd": p["sd"], "md": round(s["md"], 1),
+              "t": s["t"], "n_refs": p["n_refs"], "conflict": conflict, "source": "dtw", "message": msg}
+        self.events_log.append(ev)
+        self.history_events.append(ev)
+        if conflict:
+            self.alerts.upsert(f"GEO:DTW:{code}", "GEO", "geology", "watch", f"Top correlation conflict: {name}",
+                               msg + ". Check cuttings and the LWD GR before trusting the re-anchored look-ahead.",
+                               s["md"], s["t"], formation=code, confidence=0.5)
+
+    def _pick_top(self, code: str, tvd: float, s: dict, source: str = "mudlogger", info: dict | None = None) -> None:
         pred = self.tops.get(code, {}).get("tvd")
         self.picked[code] = tvd
         self.det.reset_dxc()
@@ -148,10 +295,14 @@ class LiveSession:
             self.alerts.clear(key, s["t"], "bit left the formation")
         self._recompute_profile()
         delta = tvd - pred if pred is not None else 0.0
-        self.events_log.append({"type": "top_pick", "formation": code, "tvd": round(tvd, 1), "md": round(s["md"], 1),
-                                "t": s["t"], "delta_m": round(delta, 1),
-                                "message": f"{FORMATION_BY_CODE[code].name} top picked at {tvd:,.0f} m TVD "
-                                           f"({delta:+.0f} m vs prognosis) - look-ahead re-anchored"})
+        how = (f"auto-picked by GR correlation (DTW, {info['n_refs']} offsets, ± {info['sd']:.0f} m)"
+               if source == "dtw" and info else "picked")
+        ev = {"type": "top_pick", "formation": code, "tvd": round(tvd, 1), "md": round(s["md"], 1),
+              "t": s["t"], "delta_m": round(delta, 1), "source": source,
+              "message": f"{FORMATION_BY_CODE[code].name} top {how} at {tvd:,.0f} m TVD "
+                         f"({delta:+.0f} m vs prognosis) - look-ahead re-anchored"}
+        self.events_log.append(ev)
+        self.history_events.append(ev)
         self.alerts.upsert(f"GEO:{code}", "GEO", "geology", "info", f"Top picked: {FORMATION_BY_CODE[code].name}",
                            f"Picked at {tvd:,.0f} m TVD ({delta:+.0f} m vs offset-predicted top). All deeper offset hazards "
                            f"re-projected.", s["md"], s["t"], formation=code, confidence=1.0)
@@ -193,7 +344,7 @@ class LiveSession:
                                drivers=[{"channel": "ecd" if f["hazard"] == "LOSS" else "mw", "value": f["value"],
                                          "baseline": f["limit"], "unit": "ppg"}])
 
-    def _handle_signal(self, sig: Signal, s: dict) -> str:
+    def _handle_signal(self, sig: Signal, s: dict, p_value: float | None = None, gate_key: str | None = None) -> str:
         la = self.alerts.active_lookahead(sig.hazard, s["md"])
         if sig.hazard == "STUCK" and la is None:
             la = self.alerts.active_lookahead("TORQUE", s["md"]) or self.alerts.active_lookahead("INSTAB", s["md"])
@@ -210,7 +361,11 @@ class LiveSession:
                                s["md"], s["t"], formation=s.get("formation"), confidence=round(conf, 3),
                                drivers=sig.drivers, evidence=la.evidence if la else [], recommendations=recs,
                                analogs=analogs, corroborated=corroborated,
-                               zone=la.zone if la else None)
+                               zone=la.zone if la else None,
+                               p_value=None if p_value is None else round(p_value, 4),
+                               calibrated=p_value is not None)
+        if gate_key:
+            self._gate_of[key] = gate_key
         return key
 
     def _analogs(self, s: dict) -> list:
@@ -244,7 +399,8 @@ class LiveSession:
         return {"i": self.i, "n": self.n, "t": s["t"], "md": round(s["md"], 1), "tvd": round(s["tvd"], 1),
                 "formation": fm, "rel": round(rel, 3), "next_top": next_top, "mw": s["mw"], "ecd": round(s["ecd"], 2),
                 "window": f.get("window") if f else None, "picked": self.picked, "zones_ahead": ahead,
-                "progress": round(self.i / self.n, 4),
+                "progress": round(self.i / self.n, 4), "alert_load": self.alert_load(),
+                "budget": self.conformal.state(), "session_id": self.session_id, "digest": self.digest[-8:],
                 "episode": next((e["id"] for e in self.episodes if e.get("onset_md", e["md"]) - 200 <= s["md"] <= e["md"] + 80), None)}
 
     def ribbon(self, md_from: float, span: float = 300.0) -> list[dict]:

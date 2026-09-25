@@ -121,6 +121,16 @@ pre.page { white-space: pre-wrap; font-family: var(--mono); font-size: 11.5px; l
 mark { background: #6b4a00; color: #fff3cf; border-radius: 3px; padding: 0 1px; }
 mark.ev-LOSS { background: #1d3f6a; } mark.ev-KICK { background: #6a2a12; } mark.ev-STUCK { background: #0f4a36; }
 
+.modal.brief { width: min(860px, 100%); }
+h4.brief-h { margin: 0 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: var(--ink-3); }
+ul.brief-list { margin: 0; padding-left: 18px; line-height: 1.6; }
+@media print {
+  .shell > :not(.modal-bg), .nav, .topbar { display: none !important; }
+  .modal-bg { position: static; background: none; padding: 0; }
+  .modal { border: 0; max-height: none; width: 100%; color: #000; background: #fff; }
+  .modal .hd button { display: none; }
+}
+
 /* ---------- misc */
 .tooltip { position: fixed; pointer-events: none; z-index: 2000; background: #0b0f14; border: 1px solid var(--line-strong); border-radius: 8px; padding: 7px 9px; font-size: 12px; max-width: 340px; box-shadow: 0 8px 24px rgba(0,0,0,.5); }
 .empty { color: var(--ink-3); padding: 18px; text-align: center; }

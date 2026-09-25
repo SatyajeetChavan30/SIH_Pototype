@@ -576,14 +576,43 @@ class Ingestor:
                 "events": stored["events"], "lessons": stored["lessons"], "tops": ex.tops,
                 "review": stored["review"]}
 
-    def store_extraction(self, ex: DocExtraction, doc_id: str) -> dict:
+    def ingest_text(self, text: str, title: str, author: str, well_hint: str | None = None, lang: str = "en",
+                    original: str | None = None, source: str = "expert-memo") -> dict:
+        """Ingest an expert memo (typed, or transcribed from a voice note). Everything extracted from it goes to
+        peer review before it can influence alerts or rankings: expert recollection is valuable but unverified."""
+        memo_hash = hashlib.sha1(f"{author}|{title}|{text}".encode()).hexdigest()[:10]
+        path = Path(f"memo_{memo_hash}.txt")
+        doc_id = doc_id_for(path)
+        pages = [PageText(1, text, False, None)]
+        ex = extract_document(pages, self.clf, self.ctx, doc_id=doc_id, well_hint=well_hint)
+        ex.well_id = ex.well_id or well_hint
+        self.db.execute("DELETE FROM pages WHERE doc_id=?", (doc_id,))
+        self.db.insert("documents", {"id": doc_id, "well_id": ex.well_id, "kind": "MEMO", "title": title,
+                                     "path": str(path), "pages": 1, "ocr_pages": 0, "status": "in review",
+                                     "created": dt.datetime.now().isoformat(timespec="seconds"),
+                                     "meta": {"source": source, "author": author, "lang": lang,
+                                              "original_transcript": original, "warnings": ex.warnings}})
+        self.db.insert("pages", {"doc_id": doc_id, "page_no": 1, "text": text, "ocr": 0, "ocr_conf": None})
+        if not ex.lessons:   # a memo is itself a lesson candidate even without explicit lesson wording
+            hz = ex.events[0].hazard if ex.events else None
+            fm = ex.events[0].formation if ex.events else None
+            ex.lessons.append({"hazard": hz, "formation": fm, "text": text.strip()[:600], "page": 1, "start": 0,
+                               "end": min(len(text), 600)})
+        stored = self.store_extraction(ex, doc_id, force_review=True, author=author)
+        self.db.commit()
+        return {"doc_id": doc_id, "kind": "MEMO", "well_id": ex.well_id, "author": author, "warnings": ex.warnings,
+                "pages": ex.pages, "tops": [],
+                "sentences": [s.to_dict() for s in ex.sentences if s.role != "other" or s.hazard],
+                "events": stored["events"], "lessons": stored["lessons"], "review": stored["review"]}
+
+    def store_extraction(self, ex: DocExtraction, doc_id: str, force_review: bool = False, author: str | None = None) -> dict:
         ctx = self.ctx(ex.well_id)
         out_events, review = [], []
         for e in ex.events:
             if ctx is not None and e.formation and e.md is not None:
                 e.tvd = e.tvd if e.tvd is not None else round(ctx.tvd_at(e.md), 1)
                 e.rel = rel_in_formation(ctx.tops_tvd, e.formation, e.tvd, self.thick)
-            status = "auto" if e.confidence >= config.REVIEW_THRESHOLD else "pending"
+            status = "auto" if e.confidence >= config.REVIEW_THRESHOLD and not force_review else "pending"
             merged_id = self._merge_or_insert(e, status)
             out_events.append({"id": merged_id, "hazard": e.hazard, "subtype": e.subtype, "md": e.md,
                                "formation": e.formation, "confidence": e.confidence, "status": status,
@@ -595,12 +624,23 @@ class Ingestor:
                 rid = f"R-{merged_id}"
                 self.db.insert("review_queue", {"id": rid, "doc_id": doc_id, "kind": "event", "payload": out_events[-1],
                                                 "confidence": e.confidence,
-                                                "reason": _review_reason(e), "status": "open",
+                                                "reason": f"expert memo by {author}: peer review required" if force_review
+                                                else _review_reason(e), "status": "open",
                                                 "created": dt.datetime.now().isoformat(timespec="seconds")})
                 review.append(rid)
         stored_lessons = []
         for i, l in enumerate(ex.lessons):
             lid = f"L-{doc_id}-{i}"
+            if force_review:
+                payload = {"id": lid, "well_id": ex.well_id, "hazard": l["hazard"], "formation": l["formation"],
+                           "text": l["text"], "doc_id": doc_id, "page_no": l["page"], "start": l["start"],
+                           "end": l["end"], "author": author}
+                self.db.insert("review_queue", {"id": f"R-{lid}", "doc_id": doc_id, "kind": "lesson", "payload": payload,
+                                                "confidence": 1.0, "reason": f"expert memo by {author}: peer review required",
+                                                "status": "open", "created": dt.datetime.now().isoformat(timespec="seconds")})
+                review.append(f"R-{lid}")
+                stored_lessons.append({"id": lid, **l, "status": "pending"})
+                continue
             self.db.insert("lessons", {"id": lid, "well_id": ex.well_id, "hazard": l["hazard"], "formation": l["formation"],
                                        "text": l["text"], "doc_id": doc_id, "page_no": l["page"], "start": l["start"],
                                        "end": l["end"]})
