@@ -18,13 +18,16 @@ export interface LiveData {
   events: { type: string; message: string; md: number; t: number }[];
   sections: any[];
   version: number;
+  autoPause: boolean;
+  pausedOn: string | null;   // alert key that triggered an auto-pause
 }
 
 const MAX_SAMPLES = 480;
 
 class LiveStore {
   d: LiveData = { connected: false, playing: true, speed: 4, status: null, samples: [], alerts: new Map(), zones: [], tops: {},
-    window: {}, grid: [], episodes: [], ribbon: [], events: [], sections: [], version: 0 };
+    window: {}, grid: [], episodes: [], ribbon: [], events: [], sections: [], version: 0, autoPause: true, pausedOn: null };
+  seenCritical = new Set<string>();
   ws: WebSocket | null = null;
   subs = new Set<() => void>();
   timer: number | null = null;
@@ -44,16 +47,25 @@ class LiveStore {
   onMessage(m: any) {
     const d = this.d;
     if (m.type === "init") {
+      d.playing = true;
       d.samples = []; d.alerts = new Map(); d.events = [];
       d.episodes = m.episodes; d.zones = m.zones; d.tops = m.tops; d.window = m.window; d.grid = m.grid; d.ribbon = m.ribbon;
-      d.sections = m.sections; d.status = m.status;
+      d.sections = m.sections; d.status = m.status; d.pausedOn = null;
+      this.seenCritical = new Set((m.alerts as Alert[]).map((a) => a.id));
       for (const a of m.alerts as Alert[]) d.alerts.set(a.key, a);
     } else if (m.type === "tick") {
       if (m.samples?.length) {
         d.samples = d.samples.concat(m.samples);
         if (d.samples.length > MAX_SAMPLES) d.samples = d.samples.slice(d.samples.length - MAX_SAMPLES);
       }
-      for (const a of m.alerts as Alert[]) d.alerts.set(a.key, a);
+      for (const a of m.alerts as Alert[]) {
+        d.alerts.set(a.key, a);
+        // stop the replay on every new critical alert so the audience sees it (at any replay speed)
+        if (a.level === "critical" && a.status === "active" && !this.seenCritical.has(a.id)) {
+          this.seenCritical.add(a.id);
+          if (d.autoPause && d.playing) { d.pausedOn = a.key; this.send({ cmd: "pause" }); }
+        }
+      }
       if (m.status) d.status = m.status;
       if (m.events?.length) d.events = [...m.events, ...d.events].slice(0, 30);
       if (m.ribbon) d.ribbon = m.ribbon;
@@ -75,7 +87,8 @@ class LiveStore {
     this.subs.forEach((f) => f());
   }
   send(cmd: Record<string, unknown>) {
-    if (cmd.cmd === "play") this.d.playing = true;
+    if (cmd.cmd === "autoPause") { this.d.autoPause = Boolean(cmd.value); this.bump(true); return; }
+    if (cmd.cmd === "play" || cmd.cmd === "jump" || cmd.cmd === "restart") { this.d.playing = true; this.d.pausedOn = null; }
     if (cmd.cmd === "pause") this.d.playing = false;
     if (cmd.cmd === "speed") this.d.speed = Number(cmd.value);
     this.ws?.readyState === 1 && this.ws.send(JSON.stringify(cmd));

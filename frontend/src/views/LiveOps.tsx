@@ -14,7 +14,7 @@ export default function LiveOps() {
   const [live, send] = useLive();
   const [sel, setSel] = useState<string | null>(null);
   const [rig, setRig] = useState(false);
-  const [showCleared, setShowCleared] = useState(false);
+  const [showCleared, setShowCleared] = useState(true);
   const st = live.status;
 
   const alerts = useMemo(() => [...live.alerts.values()]
@@ -30,6 +30,12 @@ export default function LiveOps() {
   const ecdBad = win?.max_ecd != null && st && st.ecd > win.max_ecd;
   const mwBad = win?.min_mw != null && st && st.mw < win.min_mw;
   const top = alerts.find((a) => a.status === "active" && a.level !== "info");
+  const pausedAlert = live.pausedOn && !live.playing ? live.alerts.get(live.pausedOn) : undefined;
+  const pausedBanner = pausedAlert && <div className="banner row" role="status" style={{ justifyContent: "space-between", borderColor: LEVEL.critical.color }}>
+    <span>{LEVEL.critical.icon} Replay paused on a new critical alert: <b>{pausedAlert.title}</b> at {fmt.m(pausedAlert.md)}</span>
+    <span className="row"><button className="btn sm" onClick={() => setSel(pausedAlert.key)}>Show evidence</button>
+      <button className="btn sm primary" onClick={() => send({ cmd: "play" })}>▶ Resume</button></span>
+  </div>;
 
   const controls = <div className="row wrap" style={{ gap: 8 }}>
     <button className="btn sm primary" onClick={() => send({ cmd: live.playing ? "pause" : "play" })}>{live.playing ? "❚❚ Pause" : "▶ Play"}</button>
@@ -41,6 +47,8 @@ export default function LiveOps() {
       onClick={() => { setSel(null); send({ cmd: "jump", episode: e.id }); }}>
       <span className="swatch" style={{ background: HAZARD_COLOR[e.hazard] }} /> {e.id} · {e.label.split(" ").slice(0, 3).join(" ")}</button>)}
     <button className="btn sm ghost" onClick={() => { setSel(null); send({ cmd: "restart" }); }}>↺ Restart</button>
+    <label className="small row" style={{ gap: 4 }} title="Pause the replay whenever a new critical alert opens">
+      <input type="checkbox" checked={live.autoPause} onChange={(e) => send({ cmd: "autoPause", value: e.target.checked })} /> auto-pause on critical</label>
     <button className={`btn sm ${rig ? "primary" : ""}`} onClick={() => setRig(!rig)}>{rig ? "RTOC view" : "Rig-site view"}</button>
   </div>;
 
@@ -48,6 +56,7 @@ export default function LiveOps() {
     const recs = top?.recommendations?.actions.filter((x) => x.verdict === "recommended").slice(0, 2) ?? [];
     return <div className="col">
       {controls}
+      {pausedBanner}
       <div className="rig">
         <div className="card">
           <div className="muted">Bit depth</div><div className="big num">{fmt.m(st.md)}</div>
@@ -75,6 +84,7 @@ export default function LiveOps() {
       </div>
       {controls}
     </div>
+    {pausedBanner}
     {st && <div className="kpis">
       <div className="kpi"><div className="k">Bit depth</div><div className="v num">{fmt.m(st.md)}</div><div className="d num">TVD {fmt.m(st.tvd)}</div></div>
       <div className="kpi"><div className="k">Formation (estimated)</div><div className="v" style={{ fontSize: 17 }}>{fmName(st.formation)}</div>

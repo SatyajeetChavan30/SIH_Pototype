@@ -446,6 +446,7 @@ async def live(ws: WebSocket):
         return
     session = await asyncio.to_thread(LiveSession, S.kb, S.model, S.analogs)
     state = {"playing": True, "speed": 4}
+    lock = asyncio.Lock()   # the session is not thread-safe: never step it while a jump/reset is running
 
     def init_msg():
         return {"type": "init", "well": _well_summary(S.kb.active), "episodes": session.episodes,
@@ -467,9 +468,13 @@ async def live(ws: WebSocket):
             elif cmd == "speed":
                 state["speed"] = int(max(1, min(60, msg.get("value", 4))))
             elif cmd in ("jump", "restart"):
-                ep = msg.get("episode")
-                await asyncio.to_thread(session.jump_to_episode if cmd == "jump" else session.reset, *( [ep] if cmd == "jump" else [0]))
-                await ws.send_text(json.dumps(_clean(init_msg()), default=_json_default))
+                async with lock:
+                    if cmd == "jump":
+                        await asyncio.to_thread(session.jump_to_episode, msg.get("episode"))
+                    else:
+                        await asyncio.to_thread(session.reset, 0)
+                    state["playing"] = True
+                    await ws.send_text(json.dumps(_clean(init_msg()), default=_json_default))
             elif cmd == "ack":
                 session.alerts.ack(msg.get("id"))
             elif cmd == "analogs":
@@ -479,12 +484,13 @@ async def live(ws: WebSocket):
         tick = 0
         while True:
             await asyncio.sleep(0.1)
-            if not state["playing"] or session.i >= session.n:
-                if session.alerts.changed:
-                    await ws.send_text(json.dumps(_clean({"type": "tick", "samples": [], "alerts": session.alerts.pop_changed(),
-                                                          "status": session.status(), "events": []}), default=_json_default))
-                continue
-            r = await asyncio.to_thread(session.step, state["speed"])
+            async with lock:
+                if not state["playing"] or session.i >= session.n:
+                    if session.alerts.changed:
+                        await ws.send_text(json.dumps(_clean({"type": "tick", "samples": [], "alerts": session.alerts.pop_changed(),
+                                                              "status": session.status(), "events": []}), default=_json_default))
+                    continue
+                r = await asyncio.to_thread(session.step, state["speed"])
             tick += 1
             r["type"] = "tick"
             for smp in r["samples"]:

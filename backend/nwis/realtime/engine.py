@@ -48,6 +48,7 @@ class LiveSession:
         self.picked: dict[str, float] = {}
         self.pending_picks: list[tuple[int, str, float]] = []
         self.prev_fm = None
+        self.prev_t: float | None = None
         self.recent: list[dict] = []
         self.events_log: list[dict] = []
         self.last_analog_md = -1e9
@@ -131,6 +132,9 @@ class LiveSession:
         if s["md"] - self.last_window_check_md > 40 and s["state"] == 0:
             self.last_window_check_md = s["md"]
             self._window_check(s, fm_est)
+        if self.prev_t is not None and s["state"] != 0:
+            self.alerts.freeze(s["t"] - self.prev_t)
+        self.prev_t = s["t"]
         self.alerts.clear_stale(s["t"], keep)
         self.i += 1
         return s
@@ -140,6 +144,8 @@ class LiveSession:
         pred = self.tops.get(code, {}).get("tvd")
         self.picked[code] = tvd
         self.det.reset_dxc()
+        for key in [k for k in self.alerts.alerts if k.startswith("MW:") and not k.endswith(f":{code}")]:
+            self.alerts.clear(key, s["t"], "bit left the formation")
         self._recompute_profile()
         delta = tvd - pred if pred is not None else 0.0
         self.events_log.append({"type": "top_pick", "formation": code, "tvd": round(tvd, 1), "md": round(s["md"], 1),

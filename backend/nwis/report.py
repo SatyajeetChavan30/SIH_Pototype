@@ -51,15 +51,15 @@ Planned TD {{ '{:,.0f}'.format(t.td_md) }} m MD &middot; Offsets within {{ radiu
 <h2>3. Offset-derived mud-weight window vs plan</h2>
 <table><tr><th>Formation</th><th>Planned MW / ECD (ppg)</th><th>Min MW (kick/collapse P10)</th><th>Max ECD (losses)</th><th>Notes</th></tr>
 {% for c, f in win.formations.items() %}{% set sec = plan_at(c) %}<tr><td>{{ fm(c) }}</td><td>{% if sec %}{{ sec.mw_ppg }} / {{ sec.ecd_ppg }}{% endif %}</td>
-<td>{{ f.window.min_mw or '&ndash;' }}{% if f.kick.kill_mw_max %} <span class="cite">(max kill MW {{ f.kick.kill_mw_max }})</span>{% endif %}</td>
-<td>{{ f.window.max_ecd or '&ndash;' }}</td><td class="cite">{{ f.loss.note or '' }}</td></tr>{% endfor %}</table>
+<td>{{ f.window.min_mw or '–' }}{% if f.kick.kill_mw_max %} <span class="cite">(max kill MW {{ f.kick.kill_mw_max }})</span>{% endif %}</td>
+<td>{{ f.window.max_ecd or '–' }}</td><td class="cite">{{ f.loss.note or '' }}</td></tr>{% endfor %}</table>
 
 <h2>4. Section-by-section hazards &amp; what worked in offsets</h2>
 {% for r in recs %}<div class="box" style="margin-bottom:10px"><b>{{ hz(r.hazard) }} &mdash; {{ fm(r.formation) }}</b>
 <span class="cite">({{ r.n_events }} offset events, scope: {{ r.scope }})</span>
 <table><tr><th>Action</th><th class="num">Cured</th><th class="num">First try</th><th class="num">Median NPT (h)</th><th>Verdict</th></tr>
 {% for a in r.actions[:5] %}<tr><td>{{ a.label }}</td><td class="num">{{ a.cured }}/{{ a.attempts }}</td><td class="num">{{ a.first_try }}</td>
-<td class="num">{{ a.median_npt_h or '&ndash;' }}</td><td>{{ a.verdict }}</td></tr>{% endfor %}</table>
+<td class="num">{{ a.median_npt_h or '–' }}</td><td>{{ a.verdict }}</td></tr>{% endfor %}</table>
 {% if r.preventive %}<div><b>Preventive:</b> {% for p in r.preventive %}{{ p.text }}{% if not loop.last %}; {% endif %}{% endfor %}</div>{% endif %}
 {% for l in r.lessons[:2] %}<div class="cite">Lesson ({{ l.well_id }}): {{ l.text }} &mdash; {{ l.title }}, p.{{ l.page_no }}</div>{% endfor %}
 </div>{% endfor %}

@@ -77,6 +77,12 @@ class AlertManager:
             self.changed.add(key)
         return a
 
+    def freeze(self, dt: float) -> None:
+        """Pause the staleness clock (connections, well shut-in/kill): no drilling data means no evidence to clear."""
+        for a in self.alerts.values():
+            if a.status != "cleared" and a.source in ("real-time", "fused"):
+                a.updated_t += dt
+
     def clear_stale(self, t: float, keep: set[str]) -> None:
         for key, a in self.alerts.items():
             if a.status != "cleared" and a.source in ("real-time", "fused") and key not in keep and t - a.updated_t > CLEAR_AFTER_S:
