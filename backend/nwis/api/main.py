@@ -632,7 +632,7 @@ def analytics():
               "npt_by_formation": [{"formation": f, **{h: round(v, 1) for h, v in d.items()}} for f, d in
                                    sorted(by_fm.items(), key=lambda kv: FORMATION_ORDER.index(kv[0]))],
               "events_by_period": [{"period": f"{y}-{y + 4}", **dict(c)} for y, c in sorted(by_year.items())],
-              "risk_metrics": S.db.kv_get("risk_metrics"), "extraction_eval": S.db.kv_get("extraction_eval"),
+              "risk_metrics": S.db.kv_get("risk_metrics"), "extraction_eval": S.db.kv_get("extraction_eval"), "ocr_eval": S.db.kv_get("ocr_eval"),
               "feedback": fb, "inventory": inv, "build": S.db.kv_get("build_info"), "audit": audit.summary(S.db),
               "live_eval": S.db.kv_get("live_eval"), "public_eval": S.db.kv_get("public_eval")})
 

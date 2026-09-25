@@ -35,6 +35,7 @@ export default function Analytics() {
   const inv = d.inventory;
   const rm = d.risk_metrics;
   const ex = d.extraction_eval;
+  const oc = d.ocr_eval;
   const totalNpt = d.npt_by_hazard.reduce((s: number, r: any) => s + r.npt_hours, 0);
   const saving = (totalNpt / 24) * (avoid / 100) * rate;
   const hazards = Object.keys(HAZARD_COLOR);
@@ -74,6 +75,17 @@ export default function Analytics() {
             { label: "In-distribution F1", value: ex.in_distribution.f1, color: "#9e9e9e" },
           ]} />
           <div className="small muted" style={{ marginTop: 8 }}>{ex.held_out.note} Depth error {ex.held_out.depth_mae_m} m MAE. Missed examples: {ex.held_out.fn_examples.slice(0, 3).join("; ") || "none"}.</div>
+        </>}
+        {oc && <>
+          <h3 style={{ marginTop: 14 }}>Scanned reports (OCR) <span className="sub">event recall · {oc.n_truth} true events in {oc.n_docs} completion reports</span></h3>
+          <HBar max={1} fmtV={(v) => v.toFixed(2)} rows={[
+            { label: "Text PDF (no OCR)", value: oc.text_pdf.recall, color: "#9e9e9e", note: `precision ${oc.text_pdf.precision}` },
+            { label: "Standard scan (200 dpi)", value: oc.standard.recall, color: "#3987e5", bold: true,
+              note: `precision ${oc.standard.precision} · ${Math.round(oc.standard.char_diff * 100)}% characters differ from the text layer` },
+            { label: "Poor scan (150 dpi photocopy)", value: oc.poor.recall, color: "#3987e5",
+              note: `precision ${oc.poor.precision} · ${Math.round(oc.poor.char_diff * 100)}% characters differ` },
+          ]} />
+          <div className="small muted" style={{ marginTop: 8 }}>The same reports scored as text PDFs and as scans, so the gap is what OCR loses. On-prem RapidOCR, lines recognised from padded upright crops, OCR digit confusions repaired. Missed on poor scans: {oc.poor.fn_examples.slice(0, 3).join("; ") || "none"}.</div>
         </>}
       </div>
     </div>

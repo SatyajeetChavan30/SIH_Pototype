@@ -21,7 +21,7 @@ from . import config
 from .db import DB
 from .data import docs_gen, logs_gen
 from .data.synth import STRUCTURES, World, generate_world
-from .ingest.evaluate import evaluate_extraction
+from .ingest.evaluate import evaluate_extraction, evaluate_scans
 from .ingest.nlp import SentenceClassifier
 from .ingest.pipeline import Ingestor, load_well_ctx
 
@@ -168,6 +168,27 @@ def build(fresh: bool = True, eval_wells: int = 14) -> dict:
     ex_in = evaluate_extraction(in_docs, clf, lambda wid: load_well_ctx(db, wid))
     db.kv_set("extraction_eval", {"held_out": ex_eval, "in_distribution": ex_in})
     log(f"  held-out F1={ex_eval['f1']} (P={ex_eval['precision']} R={ex_eval['recall']}); in-dist F1={ex_in['f1']}")
+
+    from .ingest.ocr import get_ocr_engine
+    if get_ocr_engine() is not None:
+        log("evaluating OCR on scanned completion reports (standard and poor scans)")
+        srng = np.random.default_rng(7)
+        cands = [w for w in world.wells if w.events and not w.is_active]
+        scan_docs = []
+        for i in srng.choice(len(cands), size=min(12, len(cands)), replace=False):
+            w = cands[int(i)]
+            tp = eval_dir / f"{w.id}_WCR_text.pdf"
+            docs_gen.write_wcr(w, tp)
+            scans = {}
+            for q in docs_gen.SCAN_QUALITY:
+                scans[q] = eval_dir / f"{w.id}_WCR_scan_{q}.pdf"
+                docs_gen.rasterize_pdf(tp, scans[q], seed=len(w.id), quality=q)
+            truth = [{"hazard": e.hazard, "md": e.md, "formation": e.formation, "attempts": e.attempts} for e in w.events]
+            scan_docs.append((tp, w.id, truth, scans))
+        ocr_eval = evaluate_scans(scan_docs, clf, lambda wid: load_well_ctx(db, wid))
+        db.kv_set("ocr_eval", ocr_eval)
+        log("  event recall: text PDF {} · standard scan {} · poor scan {} ({} events)".format(
+            ocr_eval["text_pdf"]["recall"], ocr_eval["standard"]["recall"], ocr_eval["poor"]["recall"], ocr_eval["n_truth"]))
 
     log("writing drilling-parameter logs + active-well stream")
     lrng = np.random.default_rng(config.SEED + 1)

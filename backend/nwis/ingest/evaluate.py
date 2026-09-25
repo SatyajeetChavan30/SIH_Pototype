@@ -1,7 +1,9 @@
 """Honest extraction evaluation on held-out phrasing (style B) against generator truth."""
 from __future__ import annotations
 
+import difflib
 from collections import defaultdict
+from pathlib import Path
 
 from .pipeline import extract_document
 from .pdf import extract_pages
@@ -81,3 +83,31 @@ def evaluate_pages(docs: list[tuple], clf, ctx_lookup, note: str | None = None, 
             "action_jaccard": round(act_ok / act_n, 3) if act_n else None,
             "fp_examples": fp_examples, "fn_examples": fn_examples,
             "note": note or "Held-out phrasing style (ALL-CAPS rig shorthand, different unit system) never seen by the classifier."}
+
+
+def evaluate_scans(docs: list[tuple], clf, ctx_lookup, qualities=("standard", "poor")) -> dict:
+    """OCR end to end: the same reports as text PDFs and as scans, scored against generator truth.
+
+    docs: list of (text_pdf_path, well_id, truth_events, {quality: scanned_pdf_path}). The text-PDF score is the
+    ceiling (NLP alone); the gap to it is what OCR loses. `char_diff` is 1 - similarity of the OCR text to the
+    text layer (a character-error proxy).
+    """
+    text_pages = [(extract_pages(t), wid, truth) for t, wid, truth, _ in docs]
+    out = {"text_pdf": _brief(evaluate_pages(text_pages, clf, ctx_lookup)), "n_docs": len(docs),
+           "n_truth": sum(len(truth) for _, _, truth, _ in docs)}
+    for q in qualities:
+        scan_pages, diffs = [], []
+        for (tp, wid, truth), (_, _, _, scans) in zip(text_pages, docs):
+            sp = extract_pages(Path(scans[q]))
+            a = "\n".join(p.text for p in tp)
+            b = "\n".join(p.text for p in sp)
+            diffs.append(1 - difflib.SequenceMatcher(None, a, b, autojunk=False).ratio())
+            scan_pages.append((sp, wid, truth))
+        r = evaluate_pages(scan_pages, clf, ctx_lookup)
+        out[q] = {**_brief(r), "char_diff": round(sum(diffs) / len(diffs), 3), "fn_examples": r["fn_examples"],
+                  "ocr_pages": sum(1 for sp, _, _ in scan_pages for p in sp if p.ocr)}
+    return out
+
+
+def _brief(r: dict) -> dict:
+    return {k: r[k] for k in ("precision", "recall", "f1", "depth_mae_m", "formation_accuracy")}

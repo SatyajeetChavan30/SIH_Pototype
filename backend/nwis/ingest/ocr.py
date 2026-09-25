@@ -8,6 +8,7 @@ from functools import lru_cache
 
 class RapidOCREngine:
     name = "rapidocr-onnx"
+    MIN_SCORE = 0.5    # recognitions below this are noise (speckle, stamps, rule lines)
 
     def __init__(self):
         from rapidocr_onnxruntime import RapidOCR  # type: ignore
@@ -42,15 +43,39 @@ class RapidOCREngine:
         return "\n".join(texts), round(float(sum(confs) / len(confs)), 3) if confs else 0.0
 
     def _recognize_one(self, png: bytes) -> tuple[str, float, int]:
-        result, _ = self._ocr(png)
-        if not result:
+        """Detect lines, then recognise each one from a padded, upright crop.
+
+        RapidOCR's own det -> cls -> rec chain loses text on report scans in two ways: the angle classifier flips
+        long, thin full-width lines to 180 degrees (they come back as '' or a single letter), and the tight
+        detector crops make the recogniser drop word spaces ('Torquenormalised'). Report pages are never
+        upside-down, so the classifier is skipped, and each line gets a little white margin before recognition.
+        """
+        import numpy as np
+        from PIL import Image
+        boxes, _ = self._ocr(png, use_rec=False, use_cls=False)
+        if not boxes:
             return "", 0.0, 0
-        # result: [ [box(4 pts), text, score], ... ] -> rebuild reading order line by line
-        items = []
-        for box, text, score in result:
-            ys = [p[1] for p in box]
+        a = np.asarray(Image.open(io.BytesIO(png)).convert("L"))
+        H, W = a.shape
+        crops, geo = [], []
+        for box in boxes:
             xs = [p[0] for p in box]
-            items.append((min(ys), max(ys), min(xs), text, float(score)))
+            ys = [p[1] for p in box]
+            x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+            pad = max(4.0, 0.2 * (y1 - y0))
+            crop = a[max(0, int(y0 - pad)):min(H, int(y1 + pad) + 1), max(0, int(x0 - pad)):min(W, int(x1 + pad) + 1)]
+            if crop.size == 0:
+                continue
+            crops.append(np.ascontiguousarray(np.dstack([crop] * 3)))
+            geo.append((y0, y1, x0))
+        if not crops:
+            return "", 0.0, 0
+        rec, _ = self._ocr.text_rec(crops)
+        # items: (top, bottom, left, text, score) -> rebuild reading order line by line
+        items = [(y0, y1, x0, t.strip(), float(sc)) for (y0, y1, x0), (t, sc) in zip(geo, rec)
+                 if t.strip() and float(sc) >= self.MIN_SCORE]
+        if not items:
+            return "", 0.0, 0
         items.sort(key=lambda t: (t[0], t[2]))
         lines: list[list[tuple]] = []
         for it in items:

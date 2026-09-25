@@ -162,13 +162,14 @@ class DocExtraction:
 # ---------------------------------------------------------------------------
 # Record segmentation
 # ---------------------------------------------------------------------------
+# \s* between words: OCR often drops the spaces in bold headings ('2.CASINGPOLICY', '3.MUDPROGRAM')
 HEADINGS = {
-    "tops": re.compile(r"formation tops", re.I),
-    "complications": re.compile(r"(drilling )?complications|problems encountered|npt events", re.I),
-    "lessons": re.compile(r"lessons learn|recommendations", re.I),
-    "casing": re.compile(r"casing policy|casing details", re.I),
-    "mud": re.compile(r"mud program", re.I),
-    "timelog": re.compile(r"^\s*time log", re.I),
+    "tops": re.compile(r"formation\s*tops", re.I),
+    "complications": re.compile(r"(drilling\s*)?complications|problems\s*encountered|npt\s*events", re.I),
+    "lessons": re.compile(r"lessons\s*learn|recommendations", re.I),
+    "casing": re.compile(r"casing\s*policy|casing\s*details", re.I),
+    "mud": re.compile(r"mud\s*program", re.I),
+    "timelog": re.compile(r"^\s*time\s*log", re.I),
 }
 
 
@@ -272,9 +273,10 @@ def infer_cause(hazard: str, subtype: str, formation: str | None) -> str | None:
 # ---------------------------------------------------------------------------
 def detect_kind(first_text: str) -> str:
     up = first_text.upper()
-    if "WELL COMPLETION REPORT" in up:
+    flat = "".join(up.split())   # OCR often drops the spaces in bold headings ('WELL COMPLETIONREPORT')
+    if "WELLCOMPLETIONREPORT" in flat:
         return "WCR"
-    if "DAILY DRILLING REPORT" in up or "DDR" in up[:200]:
+    if "DAILYDRILLINGREPORT" in flat or "DDR" in up[:200]:
         return "DDR"
     return "OTHER"
 
@@ -430,6 +432,24 @@ def _cite(ev: XEvent, s: SentenceInfo, doc_id: str) -> None:
     ev.citations.append({"doc_id": doc_id, "page_no": s.page, "start": s.start, "end": s.end, "text": s.text})
 
 
+_CASING_SIZE = re.compile(r"\b(30|20|13[- ]3/8|9[- ]5/8|7)\s*(?:\"|''|in\b|inch)?\s*(?:casing|liner|csg)", re.I)
+
+
+def _named_shoe(text: str, ctx: WellCtx | None) -> float | None:
+    """Shoe depth (master data) of the casing string a sentence names, e.g. 'cementing of 9-5/8" casing'."""
+    if ctx is None or not ctx.sections:
+        return None
+    m = _CASING_SIZE.search(text)
+    if not m:
+        return None
+    size = m.group(1).replace(" ", "-")
+    for sec in ctx.sections:
+        cs = (sec.get("casing") or "").replace(" ", "-")
+        if cs.startswith(size + '"') or cs.startswith(size + " ") or cs == size:
+            return sec["shoe_md"]
+    return None
+
+
 def _make_event(s: SentenceInfo, rm: dict, ctx: WellCtx | None, well_id, doc_id, clf_top, lexicon=True) -> XEvent:
     text = s.text
     rate = parse_rate(text)
@@ -445,7 +465,13 @@ def _make_event(s: SentenceInfo, rm: dict, ctx: WellCtx | None, well_id, doc_id,
         depth_src = "sentence"
     else:
         rec_depths = parse_depths(rm["text"])
-        if rec_depths:
+        # A cementing sentence that names its casing string sits at that string's shoe. Prefer that over a
+        # depth borrowed from elsewhere in the record: on poor scans the bullet dash is often lost and two
+        # complications merge into one record.
+        own_shoe = _named_shoe(text, ctx) if s.hazard == "CEMENT" else None
+        if own_shoe is not None:
+            md, depth_src = own_shoe, "casing shoe (master data)"
+        elif rec_depths:
             md, depth_src = rec_depths[-1]["value_m"], "record"
         elif s.hazard == "CEMENT" and ctx is not None and ctx.sections:
             want = "9-5/8" if "9-5/8" in rm["text"] or "9 5/8" in rm["text"] or "tipam" in rm["text"].lower() else None

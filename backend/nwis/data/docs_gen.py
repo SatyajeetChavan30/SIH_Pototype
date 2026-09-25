@@ -242,18 +242,26 @@ class PdfWriter:
         self.doc.close()
 
 
-def rasterize_pdf(src: Path, dst: Path, seed: int):
+# scan quality -> (dpi, max skew in degrees, blur radius, noise sigma, darkening)
+SCAN_QUALITY = {
+    "standard": (200, 0.35, 0.4, 6, 8),    # an office flatbed scan of a clean report
+    "poor": (150, 1.0, 0.7, 14, 18),       # a low-resolution scan of an old photocopy
+}
+
+
+def rasterize_pdf(src: Path, dst: Path, seed: int, quality: str = "standard"):
     """Turn a text PDF into an image-only 'scanned' PDF (skew + blur + noise)."""
+    dpi, skew, blur, noise, dark = SCAN_QUALITY[quality]
     rng = np.random.default_rng(seed)
     src_doc = pymupdf.open(src)
     out = pymupdf.open()
     for page in src_doc:
-        pix = page.get_pixmap(dpi=200, colorspace=pymupdf.csGRAY)
+        pix = page.get_pixmap(dpi=dpi, colorspace=pymupdf.csGRAY)
         img = Image.frombytes("L", (pix.width, pix.height), pix.samples)
-        img = img.rotate(float(rng.uniform(-0.35, 0.35)), expand=False, fillcolor=255)
-        img = img.filter(ImageFilter.GaussianBlur(0.4))
+        img = img.rotate(float(rng.uniform(-skew, skew)), expand=False, fillcolor=255)
+        img = img.filter(ImageFilter.GaussianBlur(blur))
         arr = np.asarray(img).astype(np.int16)
-        arr = np.clip(arr + rng.normal(0, 6, arr.shape) - 8, 0, 255).astype(np.uint8)
+        arr = np.clip(arr + rng.normal(0, noise, arr.shape) - dark, 0, 255).astype(np.uint8)
         buf = io.BytesIO()
         Image.fromarray(arr).save(buf, format="PNG", optimize=True)
         p = out.new_page(width=page.rect.width, height=page.rect.height)

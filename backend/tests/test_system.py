@@ -32,6 +32,14 @@ def test_extraction_quality(kb):
     assert ev["held_out"]["formation_accuracy"] >= 0.95
 
 
+def test_scanned_reports_keep_their_events(kb):
+    ev = kb.db.kv_get("ocr_eval")
+    if ev is None:
+        pytest.skip("no OCR engine was installed when the demo was built")
+    assert ev["standard"]["recall"] >= 0.9 and ev["standard"]["precision"] >= 0.9
+    assert ev["poor"]["recall"] >= 0.8
+
+
 def test_every_event_is_cited(kb):
     assert kb.events and all(e["citations"] for e in kb.events)
 
