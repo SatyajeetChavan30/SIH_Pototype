@@ -108,7 +108,16 @@ class Wits0TcpSource(StreamSource):
         if self.mode == "listen":
             srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            srv.bind((self.host, self.port))
+            while True:   # the port may still be held for a moment by a listener that is shutting down
+                try:
+                    srv.bind((self.host, self.port))
+                    break
+                except OSError as e:
+                    self.last_error = f"cannot listen on port {self.port}: {e}"
+                    if self._stop.wait(2.0):
+                        srv.close()
+                        return
+            self.last_error = None
             srv.listen(1)
             srv.settimeout(1.0)
             self.bound_port = srv.getsockname()[1]

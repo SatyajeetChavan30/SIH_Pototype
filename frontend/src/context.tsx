@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { api } from "./api";
 import type { Citation, Formation, HazardDef, Meta } from "./types";
 
-export type View = "live" | "map" | "correlation" | "knowledge" | "planning" | "ingest" | "analytics" | "rig";
+export type View = "live" | "map" | "correlation" | "knowledge" | "planning" | "ingest" | "analytics" | "system" | "rig";
 
 interface AppCtx {
   meta: Meta;
@@ -13,6 +13,8 @@ interface AppCtx {
   params: Record<string, string>;
   go: (v: View, params?: Record<string, string>) => void;
   openCitation: (c: Citation) => void;
+  /** Re-read /api/meta after a setting changed on the server (live feed, map tiles, LLM). */
+  refreshMeta: () => Promise<void>;
 }
 
 const Ctx = createContext<AppCtx | null>(null);
@@ -23,7 +25,7 @@ function parseHash(): [View, Record<string, string>] {
   const [v, q] = h.split("?");
   const params: Record<string, string> = {};
   new URLSearchParams(q || "").forEach((val, k) => { params[k] = val; });
-  const views: View[] = ["live", "map", "correlation", "knowledge", "planning", "ingest", "analytics", "rig"];
+  const views: View[] = ["live", "map", "correlation", "knowledge", "planning", "ingest", "analytics", "system", "rig"];
   return [(views.includes(v as View) ? v : "live") as View, params];
 }
 
@@ -33,9 +35,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [[view, params], setRoute] = useState(parseHash());
   const [cite, setCite] = useState<Citation | null>(null);
 
+  const loadMeta = () => api<Meta>("/api/meta").then((m) => { setMeta(m); try { localStorage.setItem("nwis.meta", JSON.stringify(m)); } catch { /* best-effort */ } });
   useEffect(() => {
     // cache /api/meta so the rig-site view still opens when the link to the server is down
-    api<Meta>("/api/meta").then((m) => { setMeta(m); try { localStorage.setItem("nwis.meta", JSON.stringify(m)); } catch { /* best-effort */ } })
+    loadMeta()
       .catch((e) => {
         let cached: Meta | null = null;
         try { cached = JSON.parse(localStorage.getItem("nwis.meta") || "null"); } catch { cached = null; }
@@ -47,8 +50,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   if (err) return <div className="empty" style={{ padding: 40 }}>
-    <h2>Backend not ready</h2><p>{err}</p>
-    <p className="muted">Build the demo knowledge base: <code>cd backend && python -m nwis.cli build-demo</code> then start <code>python -m nwis.cli serve</code>.</p>
+    <h2>NWIS server not reachable</h2><p>{err}</p>
+    <p className="muted">If the knowledge base is still being built, this page continues once it is ready.</p>
+    <button className="btn" onClick={() => location.reload()}>Try again</button>
   </div>;
   if (!meta) return <div className="empty" style={{ padding: 40 }}>Loading NWIS…</div>;
 
@@ -61,6 +65,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     hz: (c) => (c ? hzMap[c] : undefined),
     go: (v, p) => { location.hash = `/${v}${p ? "?" + new URLSearchParams(p).toString() : ""}`; },
     openCitation: (c) => setCite(c),
+    refreshMeta: () => loadMeta().catch(() => undefined),
   };
   return <Ctx.Provider value={value}>
     {children}

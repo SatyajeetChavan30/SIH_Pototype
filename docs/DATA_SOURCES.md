@@ -2,7 +2,7 @@
 
 The problem statement lists nine data sources "available within OIL". All of them are **OIL-internal and confidential**, and no dataset was published with PS 26121. NWIS therefore ships with three kinds of data:
 
-1. **Synthetic Upper-Assam demo data**, generated on your machine (`python -m nwis.cli build-demo`). This is the default.
+1. **Synthetic Upper-Assam demo data**, generated on your machine from the first-run page of the dashboard (**Build knowledge base**). This is the default.
 2. **Real public stand-ins** from Norway (Sodir FactPages) and Equinor (Volve). They check the pipeline on genuine records.
 3. **OIL's own data**, in a pilot. The same importers take it unchanged.
 
@@ -15,7 +15,7 @@ The problem statement lists nine data sources "available within OIL". All of the
 | iii | Drilling and mud-logging databases | Table export (CSV / SQL) | Loaded into `wells`, `sections` and mud tables, like the Sodir importer (`public/sodir.py`) |
 | iv | Historical well parameters and drilling records | Depth-indexed logs (LAS / CSV / WITSML log) | Offset logs for correlation, DTW top picking and analogs |
 | v | Reservoir and geological data | Formation tops per well, structure outlines | `tops` table, correlation by formation |
-| vi | eRTMAC data streams | WITS-0 over TCP or WITSML 1.4.1 store | Live adapter (`realtime/sources.py`, `NWIS_STREAM=…`) |
+| vi | eRTMAC data streams | WITS-0 over TCP or WITSML 1.4.1 store | Live adapter (`realtime/sources.py`), chosen in **System → Live rig feed** |
 | vii | Well trajectory and survey data | MD / inclination / azimuth stations | `surveys` table, minimum-curvature trajectories |
 | viii | Casing, cementing and mud programme records | Casing depths and sizes, mud weights, LOT/FIT | `sections` table (casing, MW/ECD), `lot_tests` table |
 | ix | Operational event records (losses, kicks, stuck pipe, fishing, NPT) | Event table or free text | Direct load, or NLP extraction from text |
@@ -36,17 +36,17 @@ The problem statement lists nine data sources "available within OIL". All of the
 
 ### Build the real-data version (Norwegian North Sea)
 
+In the dashboard, open **System → Dataset** (admin), set the quadrants, tick *download from factpages.sodir.no* and click **Build North Sea knowledge base**. The five FactPages CSV exports (tens of MB) are fetched once and kept for offline rebuilds. A server without internet can take the CSV files through the upload box on the same card. When the build finishes NWIS switches to it; **Switch to this** on either dataset moves back and forth.
+
+For scripting, the same from a terminal:
 ```bash
 cd backend
-# one-off: fetch the five Sodir CSV exports (about tens of MB), cached for offline use
 NWIS_REGION=norway NWIS_DATA_DIR=../data_norway python -m nwis.cli build-public --download --quadrants 15,16
-# serve it (sign in as usual)
-NWIS_REGION=norway NWIS_DATA_DIR=../data_norway python -m nwis.cli serve
 ```
 
-- **Region.** `NWIS_REGION=norway` switches the stratigraphy to North Sea **groups** (Nordland … Hegre). Well-known formation names map to their group, e.g. Lista → Rogaland and Draupne → Viking.
-- **Area.** `--quadrants 15,16` is the Sleipner / Volve / Utsira High area. Use `all` for the whole North Sea.
-- **Offline copies.** Put the downloaded CSVs in a folder and pass `--from-folder DIR` instead of `--download`.
+- **Region.** The North Sea dataset switches the stratigraphy to North Sea **groups** (Nordland … Hegre). Well-known formation names map to their group, e.g. Lista → Rogaland and Draupne → Viking.
+- **Area.** Quadrants `15,16` are the Sleipner / Volve / Utsira High area. Use `all` for the whole North Sea.
+- **Offline copies.** Upload the CSVs in the dashboard (or pass `--from-folder DIR` on the command line) instead of downloading.
 - **Required attribution:** *Contains data under the Norwegian licence for Open Government data (NLOD) distributed by the Norwegian Offshore Directorate.*
 
 Limits, stated plainly:
@@ -58,9 +58,7 @@ Limits, stated plainly:
 
 ### Score extraction on Volve DDRs
 
-```bash
-cd backend && python -m nwis.cli validate-volve /path/to/volve/drilling_reports
-```
+In **Analytics → Real-data check**, upload the Volve drillReport XML files (a folder or a .zip works too). Scoring runs on the server as a background job and the results replace the instructions on that card. Scripted: `cd backend && python -m nwis.cli validate-volve /path/to/volve/drilling_reports`.
 
 ## 3. Real Indian well data: DGH National Data Repository (NDR)
 

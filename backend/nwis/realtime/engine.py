@@ -46,7 +46,8 @@ def _hole_in(hole: str | None) -> float:
 
 
 class LiveSession:
-    def __init__(self, kb: KnowledgeBase, model=None, analog_index: AnalogIndex | None = None, source=None):
+    def __init__(self, kb: KnowledgeBase, model=None, analog_index: AnalogIndex | None = None, source=None,
+                 top_mode: str | None = None):
         self.kb = kb
         self.model = model
         self.analogs = analog_index
@@ -56,6 +57,7 @@ class LiveSession:
         self.budget = DEFAULT_BUDGET
         self.source = source
         self.live = source is not None
+        self.top_mode_override = top_mode   # None = follow the configured mode (config.TOP_PICK_MODE)
         self.well = kb.active
         if self.live:
             # growing buffer fed by ingest(); no hidden truth ('fm') and no scripted episodes on a real feed
@@ -96,7 +98,7 @@ class LiveSession:
         self._recompute_profile(announce=False)
         # formation-top picking: prognosis kept un-anchored so DTW stays independent of the mud-logger picks
         self.prior_tops = {k: dict(v) for k, v in self.tops.items()}
-        self.top_mode = config.TOP_PICK_MODE
+        self.top_mode = self.top_mode_override or config.TOP_PICK_MODE
         if self.live and self.top_mode == "auto":
             self.top_mode = "dtw"      # a raw rig feed carries no mud-logger picks: GR correlation re-anchors
         self.dtw_picks: list[dict] = []
