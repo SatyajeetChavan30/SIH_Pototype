@@ -1,4 +1,4 @@
-"""Live session: replays the active well's eRTMAC stream and runs NWIS on it.
+"""Live session: runs NWIS on the active well's eRTMAC stream (stored replay or a live WITS-0 / WITSML feed).
 
 Per tick: detectors -> look-ahead proximity (formation-aligned offset zones) ->
 mud-window check -> fusion (escalate when corroborated) -> analogs + recommendations.
@@ -7,6 +7,7 @@ and the whole look-ahead is re-anchored to the actual tops.
 """
 from __future__ import annotations
 
+import re
 import uuid
 
 import numpy as np
@@ -23,6 +24,7 @@ from .calibrate import DEFAULT_BUDGET, OnlineConformal
 from .detectors import DetectorBank, Signal
 from .fusion import AlertManager
 from .toppick import DTWTopPicker, next_formation
+from ..data.logs_gen import dxc as dxc_formula
 
 LOOKAHEAD_M = 150.0
 ZONE_THRESHOLD = 0.25
@@ -32,8 +34,19 @@ CHANNELS = ["t", "md", "tvd", "gr", "rop", "wob", "rpm", "torque", "spp", "flow_
             "mw", "ecd", "dxc", "state"]
 
 
+RAW_CHANNELS = ("rop", "wob", "rpm", "torque", "spp", "flow_in", "flow_out", "pit", "hookload", "gas", "mw", "gr", "ecd")
+
+
+def _hole_in(hole: str | None) -> float:
+    """'12-1/4"' -> 12.25 (bit size for the d-exponent)."""
+    m = re.match(r"\s*(\d+)(?:-(\d+)/(\d+))?", hole or "")
+    if not m:
+        return 8.5
+    return float(m.group(1)) + (float(m.group(2)) / float(m.group(3)) if m.group(2) else 0.0)
+
+
 class LiveSession:
-    def __init__(self, kb: KnowledgeBase, model=None, analog_index: AnalogIndex | None = None):
+    def __init__(self, kb: KnowledgeBase, model=None, analog_index: AnalogIndex | None = None, source=None):
         self.kb = kb
         self.model = model
         self.analogs = analog_index
@@ -41,11 +54,23 @@ class LiveSession:
         self.audit_buffer: list[dict] = []   # decision-log rows, flushed to the DB by the API layer
         self._emit = True
         self.budget = DEFAULT_BUDGET
-        z = np.load(config.LOGS_DIR / "active_stream.npz")
-        self.data = {k: z[k] for k in z.files}
-        self.n = len(self.data["t"])
-        self.episodes = kb.db.kv_get("active_episodes", [])
+        self.source = source
+        self.live = source is not None
         self.well = kb.active
+        if self.live:
+            # growing buffer fed by ingest(); no hidden truth ('fm') and no scripted episodes on a real feed
+            self.data = {k: [] for k in CHANNELS}
+            self.n = 0
+            self.episodes = []
+            self.t0_epoch: float | None = None
+            self._last_raw: dict = {}
+            self.derived: set[str] = set()
+            self.dropped = 0
+        else:
+            z = np.load(config.LOGS_DIR / "active_stream.npz")
+            self.data = {k: z[k] for k in z.files}
+            self.n = len(self.data["t"])
+            self.episodes = kb.db.kv_get("active_episodes", [])
         self.reset(0)
 
     # ------------------------------------------------------------------ state
@@ -72,8 +97,10 @@ class LiveSession:
         # formation-top picking: prognosis kept un-anchored so DTW stays independent of the mud-logger picks
         self.prior_tops = {k: dict(v) for k, v in self.tops.items()}
         self.top_mode = config.TOP_PICK_MODE
+        if self.live and self.top_mode == "auto":
+            self.top_mode = "dtw"      # a raw rig feed carries no mud-logger picks: GR correlation re-anchors
         self.dtw_picks: list[dict] = []
-        self.dtw_done = {c for c, v in self.prior_tops.items() if v["tvd"] < float(self.data["tvd"][0]) - 20}
+        self.dtw_done: set[str] | None = self._dtw_done_below(float(self.data["tvd"][0])) if self.n else None
         self.toppicker = None
         if self.top_mode in ("dtw", "auto"):
             if not hasattr(self, "_dtw_refs"):
@@ -83,6 +110,61 @@ class LiveSession:
         self.last_window_check_md = -1e9
         if start_idx > 0:
             self.fast_forward(start_idx)
+
+    def _dtw_done_below(self, tvd0: float) -> set[str]:
+        return {c for c, v in self.prior_tops.items() if v["tvd"] < tvd0 - 20}
+
+    # ------------------------------------------------------------------ live feed
+    def ingest(self, rows: list[dict]) -> int:
+        """Append raw rig packets (WITS-0 / WITSML channel dicts) after normalising them.
+
+        Real feeds lack channels the replay has, so NWIS fills them and records which ones are derived:
+        tvd from the planned trajectory, rig state inferred from pumps and ROP, d-exponent computed from
+        ROP/RPM/WOB/bit size/MW, ECD from mud weight plus the planned annular margin when not sent.
+        """
+        added = 0
+        for r in rows:
+            md = r.get("md", r.get("hole_depth"))
+            if md is None:
+                self.dropped += 1
+                continue
+            if self.t0_epoch is None:
+                self.t0_epoch = r["t_epoch"]
+            t = float(r["t_epoch"] - self.t0_epoch)
+            if self.data["t"] and t <= self.data["t"][-1]:
+                t = self.data["t"][-1] + 1.0          # keep time strictly increasing
+            sec = self.target.section_at(md)
+            s = {"t": t, "md": float(md)}
+            for k in RAW_CHANNELS:
+                v = r.get(k, self._last_raw.get(k))
+                if v is None:
+                    self.derived.add(k)
+                    v = {"mw": sec["mw_ppg"], "flow_out": 100.0}.get(k, 0.0)
+                s[k] = float(v)
+                if k in r:
+                    self._last_raw[k] = r[k]
+            if "tvd" in r:
+                s["tvd"] = float(r["tvd"])
+            else:
+                s["tvd"] = float(self.target.traj.tvd_at_md(md))
+                self.derived.add("tvd")
+            if "ecd" not in r and "ecd" not in self._last_raw:
+                s["ecd"] = s["mw"] + max(sec["ecd_ppg"] - sec["mw_ppg"], 0.1) + 0.012 * s["rop"] / 10
+            pumps = s["flow_in"] > 50
+            on_bottom = s["rop"] > 0.2 or ("hole_depth" in r and r["hole_depth"] - md < 1.0)
+            s["state"] = 0.0 if pumps and on_bottom else 1.0
+            if s["rop"] > 0 and s["wob"] > 0 and s["rpm"] > 0:
+                s["dxc"] = float(dxc_formula(np.array([s["rop"]]), np.array([s["rpm"]]), np.array([s["wob"]]),
+                                             np.array([_hole_in(sec.get("hole"))]), s["mw"])[0])
+            else:
+                s["dxc"] = self.data["dxc"][-1] if self.data["dxc"] else 1.0
+            self.derived.add("dxc")
+            self.derived.add("state")
+            for k in CHANNELS:
+                self.data[k].append(s[k])
+            added += 1
+        self.n = len(self.data["t"])
+        return added
 
     def _recompute_profile(self, announce: bool = True) -> None:
         self.target.picked_tops_tvd = dict(self.picked)
@@ -165,11 +247,21 @@ class LiveSession:
         out, self.audit_buffer = self.audit_buffer, []
         return out
 
-    def ack(self, alert_id: str, actor: str = "RTOC"):
+    def ack(self, alert_id: str, actor: str = "RTOC", key: str | None = None, **extra):
+        """extra (e.g. acted_at, queued_offline from a rig tablet that was offline) goes into the decision log."""
         s = self.recent[-1] if self.recent else None
-        return self.alerts.ack(alert_id, actor, s["t"] if s else None, s["md"] if s else None)
+        a = self.alerts.ack(alert_id, actor, s["t"] if s else None, s["md"] if s else None, key=key, **extra)
+        if a is None and extra.get("queued_offline") and self._emit:
+            # the alert no longer exists in this session, but the person's action must still be on record
+            self.audit_buffer.append(audit.make_row("acknowledged", session_id=self.session_id, well_id=self.well.id,
+                                                    t=s["t"] if s else None, md=s["md"] if s else None,
+                                                    alert={"id": alert_id, "key": key}, actor=actor,
+                                                    payload={**extra, "unmatched": True}))
+        return a
 
     def jump_to_episode(self, ep_id: str) -> None:
+        if self.live:
+            return
         ep = next((e for e in self.episodes if e["id"] == ep_id), None)
         if not ep:
             return
@@ -190,7 +282,7 @@ class LiveSession:
             samples.append(self._step_one(emit=True))
         t_now = samples[-1]["t"] if samples else None
         return {"samples": samples, "alerts": self.alerts.pop_changed(t_now), "status": self.status(),
-                "events": self._pop_events(), "done": self.i >= self.n}
+                "events": self._pop_events(), "done": (not self.live) and self.i >= self.n}
 
     def _pop_events(self) -> list[dict]:
         out = list(self.events_log)
@@ -199,11 +291,14 @@ class LiveSession:
 
     def _step_one(self, emit: bool) -> dict:
         s = self.sample(self.i)
-        fm_true = FORMATION_ORDER[int(self.data["fm"][self.i])]
-        # mud-logger top pick (truth revealed with lag, as in real operations)
-        if self.top_mode != "dtw" and self.prev_fm is not None and fm_true != self.prev_fm and fm_true not in self.picked:
-            self.pending_picks.append((self.i + PICK_LAG_SAMPLES, fm_true, s["tvd"]))
-        self.prev_fm = fm_true
+        if self.dtw_done is None:
+            self.dtw_done = self._dtw_done_below(s["tvd"])
+        if "fm" in self.data:
+            fm_true = FORMATION_ORDER[int(self.data["fm"][self.i])]
+            # mud-logger top pick (truth revealed with lag, as in real operations)
+            if self.top_mode != "dtw" and self.prev_fm is not None and fm_true != self.prev_fm and fm_true not in self.picked:
+                self.pending_picks.append((self.i + PICK_LAG_SAMPLES, fm_true, s["tvd"]))
+            self.prev_fm = fm_true
         for pk in list(self.pending_picks):
             if self.i >= pk[0]:
                 self.pending_picks.remove(pk)
@@ -384,8 +479,14 @@ class LiveSession:
 
     # ------------------------------------------------------------------ status
     def status(self) -> dict:
-        i = min(self.i, self.n - 1)
-        s = self.recent[-1] if self.recent else self.sample(i)
+        i = max(min(self.i, self.n - 1), 0)
+        if self.recent:
+            s = self.recent[-1]
+        elif self.n:
+            s = self.sample(i)
+        else:   # live feed connected but no packet yet
+            sec0 = self.target.sections[0]
+            s = {"t": 0.0, "md": 0.0, "tvd": 0.0, "mw": sec0["mw_ppg"], "ecd": sec0["ecd_ppg"]}
         fm, rel = formation_at(self.tops, s["tvd"], self.kb)
         idx = FORMATION_ORDER.index(fm)
         nxt = next((c for c in FORMATION_ORDER[idx + 1:] if c in self.tops), None)
@@ -399,8 +500,12 @@ class LiveSession:
         return {"i": self.i, "n": self.n, "t": s["t"], "md": round(s["md"], 1), "tvd": round(s["tvd"], 1),
                 "formation": fm, "rel": round(rel, 3), "next_top": next_top, "mw": s["mw"], "ecd": round(s["ecd"], 2),
                 "window": f.get("window") if f else None, "picked": self.picked, "zones_ahead": ahead,
-                "progress": round(self.i / self.n, 4), "alert_load": self.alert_load(),
+                "progress": 1.0 if self.live else round(self.i / self.n, 4), "alert_load": self.alert_load(),
+                "waiting": self.live and self.n == 0,
                 "budget": self.conformal.state(), "session_id": self.session_id, "digest": self.digest[-8:],
+                "mode": "live" if self.live else "replay", "top_pick_mode": self.top_mode,
+                "stream": ({**self.source.stats(), "derived": sorted(self.derived), "dropped": self.dropped}
+                           if self.live else None),
                 "episode": next((e["id"] for e in self.episodes if e.get("onset_md", e["md"]) - 200 <= s["md"] <= e["md"] + 80), None)}
 
     def ribbon(self, md_from: float, span: float = 300.0) -> list[dict]:

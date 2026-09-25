@@ -59,7 +59,7 @@ export default function Correlation() {
       <svg width={W} height={H} role="img" aria-label="Well correlation panel">
         {ticks.map((d) => <g key={d}><line x1={left - 4} x2={W} y1={y(d)} y2={y(d)} stroke="var(--line)" strokeWidth={0.6} />
           <text x={left - 8} y={y(d) + 3} fontSize={10} fill="var(--ink-3)" textAnchor="end">{mode === "flat" && d > 0 ? `+${d}` : d}</text></g>)}
-        {mode === "flat" && <line x1={left} x2={W} y1={y(0)} y2={y(0)} stroke="#fff" strokeWidth={1} strokeDasharray="6 4" />}
+        {mode === "flat" && <line x1={left} x2={W} y1={y(0)} y2={y(0)} stroke="var(--ink)" strokeWidth={1} strokeDasharray="6 4" />}
         <text x={12} y={(top + H) / 2} fontSize={10.5} fill="var(--ink-3)" textAnchor="middle" transform={`rotate(-90 12 ${(top + H) / 2})`}>{mode === "flat" ? `m relative to ${fmName(flatOn)} top` : `m ${mode.toUpperCase()}`}</text>
         {tracks.map((t: any, i: number) => {
           const x0 = left + i * (trackW + gap);
@@ -77,7 +77,7 @@ export default function Correlation() {
             gr = pts.join("");
           }
           return <g key={t.well_id}>
-            <text x={x0 + trackW / 2} y={14} fontSize={11.5} fontWeight={700} fill={t.target ? "#fff" : "var(--ink)"} textAnchor="middle">{t.well_id.replace(" (ACTIVE)", "")}</text>
+            <text x={x0 + trackW / 2} y={14} fontSize={11.5} fontWeight={700} fill="var(--ink)" textAnchor="middle">{t.well_id.replace(" (ACTIVE)", "")}</text>
             <text x={x0 + trackW / 2} y={28} fontSize={9.5} fill="var(--ink-3)" textAnchor="middle">{t.target ? "target (predicted)" : `${t.distance_km} km · ${t.spud_year}${t.same_structure ? " · same str." : ""}`}</text>
             {tops.map((tp: any, k: number) => {
               const a = depthOf(t, tp.md, tp.tvd); const nx = tops[k + 1];
@@ -87,18 +87,18 @@ export default function Correlation() {
               if (yb <= ya) return null;
               return <g key={tp.formation}>
                 <rect x={x0} y={ya} width={34} height={yb - ya} fill={fm(tp.formation)?.color} opacity={t.target ? 0.55 : 0.8} />
-                {t.target && tp.sd && <rect x={x0} y={y(a - tp.sd)} width={trackW} height={y(a + tp.sd) - y(a - tp.sd)} fill="#fff" opacity={0.07} />}
+                {t.target && tp.sd && <rect x={x0} y={y(a - tp.sd)} width={trackW} height={y(a + tp.sd) - y(a - tp.sd)} fill="#000" opacity={0.06} />}
                 {yb - ya > 26 && <text x={x0 + 17} y={ya + (yb - ya) / 2} fontSize={9} fill="#0b0f14" textAnchor="middle" transform={`rotate(-90 ${x0 + 17} ${ya + (yb - ya) / 2})`}>{fmName(tp.formation).split(" ")[0]}</text>}
               </g>;
             })}
             <rect x={x0 + 36} y={top} width={trackW - 36} height={H - top - 10} fill="none" stroke="var(--line)" />
-            {gr && <path d={gr} fill="none" stroke="#8fa3b8" strokeWidth={1} opacity={0.85} />}
+            {gr && <path d={gr} fill="none" stroke="var(--ink-3)" strokeWidth={1} opacity={0.85} />}
             {t.casing.map((c: any, k: number) => { const d = depthOf(t, c.shoe_md, c.shoe_tvd); if (d == null || d < dMin || d > dMax) return null;
-              return <polygon key={k} points={`${x0 + trackW},${y(d)} ${x0 + trackW - 9},${y(d)} ${x0 + trackW},${y(d) - 9}`} fill="#e8eef4"
+              return <polygon key={k} points={`${x0 + trackW},${y(d)} ${x0 + trackW - 9},${y(d)} ${x0 + trackW},${y(d) - 9}`} fill="var(--ink)"
                 onMouseMove={(e) => show(e, <div>{c.casing} shoe at {fmt.m(c.shoe_md)} MD · MW {c.mw_ppg} ppg</div>)} onMouseLeave={hide} />; })}
             {t.events.map((e: any) => { const d = depthOf(t, e.md, e.tvd); if (d == null || d < dMin || d > dMax) return null;
               return <g key={e.id} onMouseMove={(ev) => show(ev, <div><b style={{ color: HAZARD_COLOR[e.hazard] }}>{HAZARD_SHORT[e.hazard]}</b> · {t.well_id}<br />{e.summary}</div>)} onMouseLeave={hide}>
-                <circle cx={x0 + 60 + (Object.keys(HAZARD_COLOR).indexOf(e.hazard) % 4) * 14} cy={y(d)} r={6} fill={HAZARD_COLOR[e.hazard]} stroke="#0b0f14" strokeWidth={2} />
+                <circle cx={x0 + 60 + (Object.keys(HAZARD_COLOR).indexOf(e.hazard) % 4) * 14} cy={y(d)} r={6} fill={HAZARD_COLOR[e.hazard]} stroke="var(--page)" strokeWidth={2} />
               </g>; })}
           </g>;
         })}

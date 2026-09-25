@@ -60,6 +60,18 @@ Optional on-prem speech-to-text for voice memos (Assamese, Hindi, English). Cach
 pip install -e "backend[asr]"
 ```
 
+Live rig feed instead of the stored replay: start NWIS as a WITS-0 listener, then push the demo well into it as real WITS-0 frames:
+```bash
+NWIS_STREAM=wits0-listen:5501 python -m nwis.cli serve
+python -m nwis.cli simulate-rig --connect 127.0.0.1:5501 --speed 600
+```
+Other feeds: `NWIS_STREAM=wits0-connect:HOST:PORT` or `witsml:https://store/…?well=W&wellbore=WB&log=L`. The rig-site tablet app is at `/#/rig`. It is installable and keeps the last picture when the link drops.
+
+Real-data check on the public Equinor Volve daily drilling reports (download them first and accept Equinor's licence):
+```bash
+cd backend && python -m nwis.cli validate-volve /path/to/volve/drill_reports
+```
+
 Formation-top picking mode: `NWIS_TOP_PICK=auto` (default: mud logger plus DTW QC), `dtw` or `mudlogger`.
 
 Optional on-prem LLM phrasing, off by default. It is citation-guarded, and answers stay grounded without it:
@@ -102,8 +114,10 @@ backend/nwis/
   realtime/               detectors, physics baselines, conformal alarm budget, DTW top picking, alert fusion, analog replay, live engine, replay evaluation
   kg.py report.py llm.py  knowledge graph, Offset Hazard Brief, optional Ollama with citation guard
   memory.py audit.py      shift handover + after-action reviews; hash-chained decision log
+  realtime/sources.py hub.py simulator.py   WITS-0 TCP / WITSML sources, shared live session, rig simulator
+  validate/volve.py       real-data check on the public Equinor Volve reports
   api/main.py             FastAPI REST + /ws/live WebSocket, serves the UI
-backend/tests/            34 tests (NLP, geometry, parsers, model claims, live replay, API, vision features)
+backend/tests/            41 tests (NLP, geometry, parsers, model claims, live replay, API, vision features, live feed, public-data validation)
 frontend/src/             React + TypeScript views and components
 docs/                     VISION.md, RESEARCH.md, SOLUTION.md, screenshots
 ```

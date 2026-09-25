@@ -51,7 +51,7 @@ export default function Analytics() {
       <div className="card">
         <h3>Risk prediction skill <span className="sub">pooled ROC-AUC · leave-wells-out · {rm?.n_wells} wells</span></h3>
         {rm && <HBar max={1} fmtV={(v) => v.toFixed(3)} rows={["nearest_offset", "base_rate", "offset_evidence", "ml", "blend"].map((k) => ({
-          label: METHOD_LABEL[k], value: rm.pooled[k].auc ?? 0, color: k === "ml" || k === "blend" ? "#3987e5" : "#56626f", bold: k === "ml",
+          label: METHOD_LABEL[k], value: rm.pooled[k].auc ?? 0, color: k === "ml" || k === "blend" ? "#3987e5" : "#9e9e9e", bold: k === "ml",
           note: `avg. precision ${rm.pooled[k].ap} · Brier ${rm.pooled[k].brier}`,
         }))} />}
         <div className="small muted" style={{ marginTop: 8 }}>"Nearest offset well" is how offsets are often consulted manually today. {rm?.protocol}</div>
@@ -65,11 +65,11 @@ export default function Analytics() {
         {ex && <>
           <HBar max={1} fmtV={(v) => v.toFixed(2)} rows={[
             { label: "Held-out phrasing — F1", value: ex.held_out.f1, color: "#3987e5", bold: true, note: `P ${ex.held_out.precision} · R ${ex.held_out.recall} · ${ex.held_out.n_truth} true events in ${ex.held_out.n_docs} DDRs` },
-            { label: "Held-out — precision", value: ex.held_out.precision, color: "#56626f" },
-            { label: "Held-out — recall", value: ex.held_out.recall, color: "#56626f" },
-            { label: "Formation accuracy", value: ex.held_out.formation_accuracy ?? 0, color: "#56626f" },
-            { label: "Mitigation Jaccard", value: ex.held_out.action_jaccard ?? 0, color: "#56626f" },
-            { label: "In-distribution F1", value: ex.in_distribution.f1, color: "#56626f" },
+            { label: "Held-out — precision", value: ex.held_out.precision, color: "#9e9e9e" },
+            { label: "Held-out — recall", value: ex.held_out.recall, color: "#9e9e9e" },
+            { label: "Formation accuracy", value: ex.held_out.formation_accuracy ?? 0, color: "#9e9e9e" },
+            { label: "Mitigation Jaccard", value: ex.held_out.action_jaccard ?? 0, color: "#9e9e9e" },
+            { label: "In-distribution F1", value: ex.in_distribution.f1, color: "#9e9e9e" },
           ]} />
           <div className="small muted" style={{ marginTop: 8 }}>{ex.held_out.note} Depth error {ex.held_out.depth_mae_m} m MAE. Missed examples: {ex.held_out.fn_examples.slice(0, 3).join("; ") || "none"}.</div>
         </>}
@@ -102,13 +102,14 @@ export default function Analytics() {
       </div>
     </div>
     {d.live_eval && <LiveEval ev={d.live_eval} />}
+    <PublicEval ev={d.public_eval} />
     <div className="grid2">
       <div className="card">
         <h3>Decision log <span className="sub">append-only · SHA-256 hash chain</span></h3>
         <div className="row wrap" style={{ gap: 16 }}>
           <div className="kpi" style={{ flex: 1 }}><div className="k">Entries</div><div className="v num">{fmt.n0(d.audit.n)}</div><div className="d">{d.audit.sessions} live session(s)</div></div>
           <div className="kpi" style={{ flex: 1 }}><div className="k">Chain verification</div>
-            <div className="v" style={{ color: d.audit.ok ? "#57d36a" : "#ff8080", fontSize: 17 }}>{d.audit.ok ? "✔ intact" : `✖ broken at #${d.audit.first_bad_seq}`}</div>
+            <div className="v" style={{ color: d.audit.ok ? "var(--good-ink)" : "var(--bad-ink)", fontSize: 17 }}>{d.audit.ok ? "✔ intact" : `✖ broken at #${d.audit.first_bad_seq}`}</div>
             <div className="d mono" title={d.audit.head ?? ""}>{d.audit.head ? `head ${String(d.audit.head).slice(0, 16)}…` : "empty"}</div></div>
         </div>
         {Object.keys(d.audit.by_event).length > 0 && <div className="row wrap small" style={{ gap: 6, marginTop: 8 }}>
@@ -137,7 +138,7 @@ function LiveEval({ ev }: { ev: any }) {
       <h3>Alarm budget <span className="sub">replay of the active well · {rows[0]?.hours} h of drilling</span></h3>
       <HBar fmtV={(v) => String(v)} rows={stress.map((r) => ({
         label: r.gated ? `budget ${r.budget_per_hour}/h` : "no budget (all alerts)", value: r.false_alarms,
-        color: r.gated ? "#3987e5" : "#56626f", bold: r.budget_per_hour === 1,
+        color: r.gated ? "#3987e5" : "#9e9e9e", bold: r.budget_per_hour === 1,
         note: `${r.detected}/${nEp} hazards caught · ${r.false_per_hour} false alarms per hour`,
       }))} />
       <div className="small muted" style={{ marginTop: 6 }}>False alarms under a nuisance stress test (pit transfers, flow surges, gas and stick-slip bursts injected into the replay).</div>
@@ -155,9 +156,46 @@ function LiveEval({ ev }: { ev: any }) {
       </div>
       <table className="t" style={{ marginTop: 8 }}><thead><tr><th>Formation top</th><th className="num">DTW error</th><th className="num">Mud logger error</th></tr></thead>
         <tbody>{Object.entries(dtw.per_formation).map(([c, v]: any) => <tr key={c}><td>{fmName(c)}</td>
-          <td className="num" style={{ color: Math.abs(v) > 15 ? "#ff8080" : undefined }}>{v > 0 ? "+" : ""}{v} m</td>
+          <td className="num" style={{ color: Math.abs(v) > 15 ? "var(--bad-ink)" : undefined }}>{v > 0 ? "+" : ""}{v} m</td>
           <td className="num">{ml.per_formation[c] != null ? `${ml.per_formation[c]} m` : "–"}</td></tr>)}</tbody></table>
       <div className="small muted" style={{ marginTop: 6 }}>Default mode keeps the mud-logger pick in charge and runs DTW as an independent QC that flags disagreements. Large errors (red) come from sand streaks inside clays; the synthetic mud-logger picks are near-perfect by construction.</div>
+    </div>
+  </div>;
+}
+
+/** Real-data check on the public Equinor Volve reports: zero-shot transfer and the local-adaptation curve. */
+function PublicEval({ ev }: { ev: any }) {
+  if (!ev) return <div className="card">
+    <h3>Real-data check: Equinor Volve (public) <span className="sub">not run yet</span></h3>
+    <div className="small">Everything above uses synthetic Assam data. To score NWIS on real drilling text:</div>
+    <ol className="small" style={{ margin: "6px 0 0 18px", padding: 0, lineHeight: 1.6 }}>
+      <li>Download the Volve daily drilling report XML from Equinor's Volve data-sharing page (you accept the Equinor Open Data Licence there).</li>
+      <li>Run <code>python -m nwis.cli validate-volve &lt;folder&gt;</code> in <code>backend/</code>.</li>
+      <li>Reload this page: zero-shot and locally adapted F1 appear here.</li>
+    </ol>
+    <div className="small muted" style={{ marginTop: 6 }}>NWIS reads only the free text; the operator's own activity codes are the labels, so results are agreement with operator coding.</div>
+  </div>;
+  const z = ev.zero_shot;
+  const curve: any[] = ev.adaptation ?? [];
+  return <div className="grid2">
+    <div className="card">
+      <h3>Real-data check: Equinor Volve (public) <span className="sub">{ev.n_wells} wells · {fmt.n0(ev.n_reports)} report-days · free text only</span></h3>
+      <HBar max={1} fmtV={(v) => v.toFixed(2)} rows={[
+        { label: "Zero-shot F1 (Assam-trained)", value: z.f1, color: "#56626f", note: `P ${z.precision} · R ${z.recall} · ${z.n_truth} coded events` },
+        ...curve.filter((c) => c.k_report_days > 0 && c.f1_mean != null).map((c) => ({
+          label: `+ ${c.k_report_days} local report-days`, value: c.f1_mean, color: "#3987e5", bold: c === curve[curve.length - 1],
+          note: `held-out wells, ${c.folds.length} folds` })),
+      ]} />
+      <div className="small muted" style={{ marginTop: 6 }}>Transfer from synthetic Assam reports to a different operator, basin and writing style, then with a few labelled local report-days from other wells. {ev.caveats?.[0]}</div>
+    </div>
+    <div className="card">
+      <h3>Per hazard (zero-shot) <span className="sub">agreement with operator activity codes</span></h3>
+      <table className="t"><thead><tr><th>Hazard</th><th className="num">Coded events</th><th className="num">Precision</th><th className="num">Recall</th><th className="num">F1</th></tr></thead>
+        <tbody>{Object.entries(z.by_hazard as Record<string, any>).map(([h, v]) => <tr key={h}>
+          <td><span className="swatch" style={{ background: HAZARD_COLOR[h] }} /> {HAZARD_SHORT[h] ?? h}</td>
+          <td className="num">{v.support}</td><td className="num">{v.precision}</td><td className="num">{v.recall}</td><td className="num"><b>{v.f1}</b></td></tr>)}</tbody></table>
+      <div className="small muted" style={{ marginTop: 6 }}>Depth MAE {z.depth_mae_m ?? "–"} m.
+        {ev.unmapped_interruption_codes?.length > 0 && <> Unmapped interruption codes: {ev.unmapped_interruption_codes.slice(0, 4).join("; ")}.</>}</div>
     </div>
   </div>;
 }

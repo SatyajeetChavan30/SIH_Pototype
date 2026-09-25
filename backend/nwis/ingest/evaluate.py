@@ -11,6 +11,11 @@ MATCH_TOL_M = 30.0
 
 def evaluate_extraction(docs: list[tuple], clf, ctx_lookup) -> dict:
     """docs: list of (pdf_path, well_id, truth_events[list of dict]). Returns P/R/F1 overall and by hazard."""
+    return evaluate_pages([(extract_pages(path), well_id, truth) for path, well_id, truth in docs], clf, ctx_lookup)
+
+
+def evaluate_pages(docs: list[tuple], clf, ctx_lookup, note: str | None = None, match_tol_m: float = MATCH_TOL_M) -> dict:
+    """docs: list of (pages, well_id, truth_events). Same matching rules for PDFs, XML-rendered pages or any text."""
     tp = defaultdict(int)
     fp = defaultdict(int)
     fn = defaultdict(int)
@@ -19,8 +24,8 @@ def evaluate_extraction(docs: list[tuple], clf, ctx_lookup) -> dict:
     depth_err: list[float] = []
     fp_examples: list[str] = []
     fn_examples: list[str] = []
-    for path, well_id, truth in docs:
-        ex = extract_document(extract_pages(path), clf, ctx_lookup, doc_id="eval", well_hint=well_id)
+    for pages, well_id, truth in docs:
+        ex = extract_document(pages, clf, ctx_lookup, doc_id="eval", well_hint=well_id)
         # merge duplicates inside the document like the store would
         preds = []
         for e in ex.events:
@@ -33,7 +38,7 @@ def evaluate_extraction(docs: list[tuple], clf, ctx_lookup) -> dict:
             for i, p in enumerate(preds):
                 if i in used or p.hazard != t["hazard"] or p.md is None:
                     continue
-                if abs(p.md - t["md"]) <= MATCH_TOL_M or (t["hazard"] == "CEMENT" and abs(p.md - t["md"]) <= 250):
+                if abs(p.md - t["md"]) <= match_tol_m or (t["hazard"] == "CEMENT" and abs(p.md - t["md"]) <= 250):
                     match = i
                     break
             if match is None:
@@ -45,9 +50,10 @@ def evaluate_extraction(docs: list[tuple], clf, ctx_lookup) -> dict:
             p = preds[match]
             tp[t["hazard"]] += 1
             depth_err.append(abs(p.md - t["md"]))
-            fm_n += 1
-            fm_ok += int(p.formation == t["formation"])
-            codes_t = [a["code"] for a in t["attempts"]]
+            if "formation" in t:          # public data has no Assam formations to score
+                fm_n += 1
+                fm_ok += int(p.formation == t["formation"])
+            codes_t = [a["code"] for a in t.get("attempts", [])]
             codes_p = [a["code"] for a in p.actions]
             if codes_t:
                 act_n += 1
@@ -74,4 +80,4 @@ def evaluate_extraction(docs: list[tuple], clf, ctx_lookup) -> dict:
             "depth_mae_m": round(sum(depth_err) / len(depth_err), 1) if depth_err else None,
             "action_jaccard": round(act_ok / act_n, 3) if act_n else None,
             "fp_examples": fp_examples, "fn_examples": fn_examples,
-            "note": "Held-out phrasing style (ALL-CAPS rig shorthand, different unit system) never seen by the classifier."}
+            "note": note or "Held-out phrasing style (ALL-CAPS rig shorthand, different unit system) never seen by the classifier."}

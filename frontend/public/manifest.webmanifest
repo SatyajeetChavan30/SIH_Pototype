@@ -1,0 +1,17 @@
+{
+  "name": "eRTMAC-NWIS Rig Site",
+  "short_name": "NWIS Rig",
+  "description": "Nearby Wells Intelligence at the rig site: offset-well look-ahead, alerts and what worked, usable when the VSAT link drops.",
+  "start_url": "/#/rig",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#ffffff",
+  "theme_color": "#141a21",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" },
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

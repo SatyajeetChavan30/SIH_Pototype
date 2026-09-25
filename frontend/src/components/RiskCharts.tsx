@@ -47,12 +47,12 @@ export function RiskHeatmap({ bins, hazards, zones, sections, tops, height = 760
         return <rect key={i} x={left + fmW + hi * colW} y={y(z.md0)} width={colW} height={Math.max(3, y(z.md1) - y(z.md0))} fill="none" stroke={HAZARD_COLOR[z.hazard]} strokeWidth={2} rx={2} />;
       })}
       {sections.filter((s) => s.shoe_md > 0).map((s) => <g key={s.idx}>
-        <line x1={left} x2={W} y1={y(s.shoe_md)} y2={y(s.shoe_md)} stroke="#e8eef4" strokeWidth={1.2} />
-        <polygon points={`${left - 2},${y(s.shoe_md)} ${left + 8},${y(s.shoe_md)} ${left - 2},${y(s.shoe_md) - 9}`} fill="#e8eef4" />
+        <line x1={left} x2={W} y1={y(s.shoe_md)} y2={y(s.shoe_md)} stroke="var(--ink)" strokeWidth={1.2} />
+        <polygon points={`${left - 2},${y(s.shoe_md)} ${left + 8},${y(s.shoe_md)} ${left - 2},${y(s.shoe_md) - 9}`} fill="var(--ink)" />
         <text x={W - 2} y={y(s.shoe_md) - 3} fontSize={9.5} fill="var(--ink-2)" textAnchor="end">{s.casing} shoe</text>
       </g>)}
       {Object.entries(tops).filter(([, t]) => t.md < d1 && t.md > 0).map(([c, t]) =>
-        <rect key={c} x={left} y={y(t.md - t.sd)} width={fmW - 6} height={Math.max(1, y(t.md + t.sd) - y(t.md - t.sd))} fill="#fff" opacity={0.12} />)}
+        <rect key={c} x={left} y={y(t.md - t.sd)} width={fmW - 6} height={Math.max(1, y(t.md + t.sd) - y(t.md - t.sd))} fill="#000" opacity={0.08} />)}
     </svg>
     {tip}
   </div>;
@@ -87,11 +87,11 @@ export function MWWindowChart({ win, plan, tops, height = 420, scenario }: { win
             : <text x={x(12.6)} y={(y(a) + y(b)) / 2 + 3} fontSize={9.5} fill="var(--ink-3)" textAnchor="middle">no offset constraint</text>}
           {f.window.min_mw && <line x1={x(f.window.min_mw)} x2={x(f.window.min_mw)} y1={y(a)} y2={y(b)} stroke="#d95926" strokeWidth={2} />}
           {f.window.max_ecd && <line x1={x(f.window.max_ecd)} x2={x(f.window.max_ecd)} y1={y(a)} y2={y(b)} stroke="#3987e5" strokeWidth={2} />}
-          <line x1={x(p.mw)} x2={x(p.mw)} y1={y(a)} y2={y(b)} stroke="#f3f6f9" strokeWidth={2} />
-          <line x1={x(p.ecd)} x2={x(p.ecd)} y1={y(a)} y2={y(b)} stroke="#f3f6f9" strokeWidth={1.5} strokeDasharray="4 3" />
+          <line x1={x(p.mw)} x2={x(p.mw)} y1={y(a)} y2={y(b)} stroke="var(--ink)" strokeWidth={2} />
+          <line x1={x(p.ecd)} x2={x(p.ecd)} y1={y(a)} y2={y(b)} stroke="var(--ink)" strokeWidth={1.5} strokeDasharray="4 3" />
           {(() => { const sc = scenario?.find((q) => q.formation === p.formation); return sc && <>
-            <line x1={x(sc.mw)} x2={x(sc.mw)} y1={y(a)} y2={y(b)} stroke="#fab219" strokeWidth={2.5} />
-            <line x1={x(sc.ecd)} x2={x(sc.ecd)} y1={y(a)} y2={y(b)} stroke="#fab219" strokeWidth={1.5} strokeDasharray="4 3" /></>; })()}
+            <line x1={x(sc.mw)} x2={x(sc.mw)} y1={y(a)} y2={y(b)} stroke="var(--warn)" strokeWidth={2.5} />
+            <line x1={x(sc.ecd)} x2={x(sc.ecd)} y1={y(a)} y2={y(b)} stroke="var(--warn)" strokeWidth={1.5} strokeDasharray="4 3" /></>; })()}
           <line x1={left} x2={W - right} y1={y(a)} y2={y(a)} stroke="var(--line-strong)" strokeWidth={0.8} />
           <text x={left - 6} y={y(a) + 11} fontSize={9.5} fill="var(--ink-2)" textAnchor="end">{fmName(p.formation).split(" ")[0]}</text>
         </g>;
@@ -102,7 +102,7 @@ export function MWWindowChart({ win, plan, tops, height = 420, scenario }: { win
       <span style={{ color: "#d95926" }}>━ min MW (kick / collapse)</span>
       <span style={{ color: "#3987e5" }}>━ max ECD (induced losses)</span>
       <span>━ planned MW</span><span>┅ planned ECD</span>
-      {scenario && <span style={{ color: "#fab219" }}>━ / ┅ what-if MW / ECD</span>}
+      {scenario && <span style={{ color: "var(--warn-ink)" }}>━ / ┅ what-if MW / ECD</span>}
     </div>
     {tip}
   </div>;

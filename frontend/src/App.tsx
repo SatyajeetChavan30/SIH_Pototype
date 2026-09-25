@@ -7,6 +7,7 @@ import Knowledge from "./views/Knowledge";
 import LiveOps from "./views/LiveOps";
 import OffsetMap from "./views/OffsetMap";
 import RiskPlanning from "./views/RiskPlanning";
+import RigSite from "./views/RigSite";
 
 const NAV: { v: View; label: string; ico: string }[] = [
   { v: "live", label: "Live Ops", ico: "◉" },
@@ -16,21 +17,27 @@ const NAV: { v: View; label: string; ico: string }[] = [
   { v: "knowledge", label: "Knowledge", ico: "⌕" },
   { v: "ingest", label: "Ingestion", ico: "⇪" },
   { v: "analytics", label: "Analytics", ico: "◔" },
+  { v: "rig", label: "Rig-site app", ico: "▣" },
 ];
 
 export default function App() {
   const { view, go, meta } = useApp();
   const [live] = useLive();
+  if (view === "rig") return <main className="main rigmain"><RigSite /></main>;
+  const age = live.status?.stream?.last_packet_age_s;
+  const feedTag = live.mode === "live"
+    ? `LIVE · ${live.status?.stream?.describe ?? meta.stream?.describe ?? "rig feed"}${age != null ? ` · last packet ${age < 90 ? `${Math.round(age)} s` : `${Math.round(age / 60)} min`} ago` : " · waiting for data"}`
+    : `eRTMAC replay · ${meta.active_well}`;
   const activeAlerts = [...live.alerts.values()].filter((a) => a.status === "active" && (a.level === "critical" || a.level === "warning")).length;
   return <div className="shell">
     <header className="topbar">
       <div className="brand">
-        <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden><rect width="32" height="32" rx="7" fill="#1b232c" /><path d="M16 4 L22 28 H10 Z" fill="none" stroke="#3987e5" strokeWidth="2.5" /><circle cx="16" cy="12" r="3" fill="#d95926" /></svg>
+        <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden><rect width="32" height="32" rx="7" fill="#000000" /><path d="M16 4 L22 28 H10 Z" fill="none" stroke="#ffffff" strokeWidth="2.5" /><circle cx="16" cy="12" r="3" fill="#d95926" /></svg>
         <span>eRTMAC-NWIS <small>Nearby Wells Intelligence System</small></span>
       </div>
       <div className="spacer" />
-      <span className={`tag ${live.connected ? "live" : ""}`}><span className="dot" style={{ background: live.connected ? "#57d36a" : "#7f8d9b" }} />
-        {live.connected ? `eRTMAC stream · ${meta.active_well}` : "stream offline"}</span>
+      <span className={`tag ${live.connected ? "live" : ""}`}><span className="dot" style={{ background: live.connected ? "var(--good-ink)" : "var(--ink-3)" }} />
+        {live.connected ? feedTag : live.offlineSince ? "OFFLINE · showing cached picture" : "stream offline"}</span>
       {live.status && <span className="tag num">Bit {Math.round(live.status.md).toLocaleString("en-IN")} m MD · {live.status.formation}</span>}
       <span className="tag">OCR: {meta.ocr.available ? meta.ocr.engine : "not installed"}</span>
       <span className="tag">LLM: {meta.llm.backend === "off" ? "off (grounded extractive)" : meta.llm.model}</span>

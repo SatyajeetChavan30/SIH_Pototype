@@ -30,6 +30,11 @@ REVIEW_THRESHOLD = 0.7
 TOP_PICK_MODE = os.environ.get("NWIS_TOP_PICK", "auto").lower()
 DTW_CONFLICT_M = 15.0   # DTW vs mud-logger difference that raises a correlation-conflict note
 
+# Live rig feed: "replay" (stored stream per browser), "wits0-listen:5501", "wits0-connect:host:port",
+# or "witsml:https://store/...?well=..&wellbore=..&log=..". See realtime/sources.py.
+STREAM = os.environ.get("NWIS_STREAM", "replay")
+STREAM_GAP_S = float(os.environ.get("NWIS_STREAM_GAP_S", "300"))   # no packet for this long -> stream-gap event
+
 # Optional on-prem speech-to-text for expert voice memos (pip install "nwis[asr]"; weights must be cached).
 ASR_MODEL = os.environ.get("NWIS_ASR_MODEL", "small")
 

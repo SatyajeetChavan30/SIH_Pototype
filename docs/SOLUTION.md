@@ -153,6 +153,36 @@ Planners edit mud weight, ECD or casing-shoe depth per section and the offset mo
   - hazard zones in the next 300 m, with what worked
 - **Grounding.** Both documents are extractive. The optional on-prem LLM may only rephrase them under the citation guard.
 
+### 3.16 Live rig-feed adapter (next to eRTMAC)
+- **Protocols.** `NWIS_STREAM` selects the feed:
+  - `wits0-listen:PORT`: NWIS listens and the rig or eRTMAC relay pushes WITS-0 over TCP.
+  - `wits0-connect:HOST:PORT`: NWIS connects to a serial-over-IP WITS box.
+  - `witsml:https://…`: NWIS polls a WITSML 1.4.1 store's time log with `WMLS_GetFromStore`.
+  - `replay` (default): the stored stream, as before.
+- **Robust decoding.** An incremental decoder reassembles packets split across TCP reads and skips garbage bytes and bad lines. Connections reconnect with exponential back-off, because VSAT links drop.
+- **Channel mapping.** WITS Record 01 codes are mapped directly. Gamma ray and ECD use configurable extension items (`NWIS_WITS_MAP`) to be confirmed with OIL's mud-logging vendor, and WITSML mnemonics are configurable too (`NWIS_WITSML_MAP`).
+- **Normalisation.** A real feed does not carry everything the replay has, so NWIS fills the gaps and says which channels it derived:
+  - TVD comes from the planned trajectory.
+  - Rig state is inferred from pumps and ROP.
+  - The d-exponent is computed from ROP, RPM, WOB, bit size and MW.
+  - ECD is estimated from MW plus the planned annular margin when the rig does not send it.
+  - Formation tops are re-anchored by gamma-ray DTW, because a raw feed has no mud-logger picks.
+- **One shared session.** Every console (RTOC wall, duty engineer, rig tablet) sees the same alerts, and an acknowledgement on one is visible on all. The topbar shows packet health.
+- **Stream gaps.** A feed that goes quiet for longer than `NWIS_STREAM_GAP_S` raises a *stream gap* banner and event: alerts are frozen at the last bit depth, not silently stale.
+- **Rig simulator.** `python -m nwis.cli simulate-rig --connect 127.0.0.1:5501` sends the stored well as real WITS-0 frames. It sends only what a rig WITS box would send, never state, d-exponent or hidden formation.
+
+### 3.17 Real-data check on public Equinor Volve reports
+- **Command.** `python -m nwis.cli validate-volve <folder>` scores NWIS on the public Volve daily drilling reports (WITSML drillReport XML, 1,759 report-days).
+- **Scoring.** NWIS reads the **free text only**: operator codes and NPT tags are stripped, so the labels cannot leak. The operator's own activity codes are the labels, so results are **agreement with operator coding**, not hand-checked truth.
+- **Local adaptation.** The first result is zero-shot transfer from the synthetic-trained classifier. Then NWIS re-fits with k = 20, 60 and 140 labelled local report-days from *other* wells and re-scores held-out wells. This is the DrillScribe finding (see VISION.md) turned into a routine check.
+- **Status.** Volve must be downloaded after accepting Equinor's licence, so real numbers appear in Analytics only after that run. The pipeline is tested on a synthetic Volve-format fixture.
+
+### 3.18 Rig-site offline app
+- **Install.** `#/rig` is a full-screen, large-type view that installs as an app from `manifest.webmanifest`.
+- **Offline shell.** A service worker precaches the app shell and serves it with no server. A few read-only API calls fall back to their cached copies.
+- **Offline picture.** The live picture (bit depth, formation, next top, MW/ECD against the window, the top alert and what worked) is kept on the device. With the link down it is shown under an **OFFLINE: last known picture from HH:MM** banner.
+- **Queued acknowledgements.** Acknowledgements made offline are queued on the device and delivered on reconnect, carrying the original time, `acted_at` and `queued_offline`. If the alert no longer exists on the server, the action is still written to the decision log and marked `unmatched`.
+
 ## 4. Measured results (synthetic Upper-Assam dataset, reproducible)
 
 `python -m nwis.cli build-demo` generates the data. It is deterministic (seed 26121) and takes about 2.5 minutes. It produces **59 offset wells, 118 PDFs (4 scanned), 2,100+ pages, 133 extracted events, 119 lessons, and 1,100+ citations**.
@@ -172,6 +202,8 @@ Planners edit mud weight, ECD or casing-shoe depth per section and the offset mo
 | | Overpressure early warning (dxc + gas) | Fires about 50 m before the kick |
 | Alarm budget, nuisance stress replay (pit transfers, flow surges, gas and stick-slip bursts injected; 114 h) | False alarms, no budget → budget 1/h | **14 → 9**, still **4 / 4** hazards detected; 0 false alarms on the clean stream |
 | DTW top picking, no mud-logger picks | Median / mean / worst error vs hidden tops (4 tops) | **8 m** / 17 m / 49 m (Tipam, fooled by a sand streak in the Girujan clay); still **4 / 4** hazards detected |
+| Live WITS-0 feed over TCP (simulator → listener → shared session) | S1 losses on the live path; derived channels | **Detected and corroborated**; state, d-exponent and TVD inferred (not sent by the rig); DTW re-anchored the Tipam top live |
+| Rig-site offline app | Server stopped, page reloaded | App shell and last picture served offline; queued acknowledgement logged after reconnect with `queued_offline` |
 | Case-mix-adjusted mitigation ranking | Toy case with severity confounding (unit test) | Adjustment removes more than half of the raw bias |
 
 **Honesty note:** these numbers validate the *pipeline mechanics* on synthetic data with known ground truth, which is why they can be measured at all. They are not field performance. The first pilot step is to re-measure them on OIL's own DDR/WCR archive (§7).
@@ -203,12 +235,16 @@ Planners edit mud weight, ECD or casing-shoe depth per section and the offset mo
    - **Risk & Planning:** in the what-if planner, drop the 12¼″ ECD to 10.0 ppg and show Tipam loss risk falling by about 8 points.
    - **Knowledge:** open **After-action review** on a Sylhet loss.
    - **Ingestion:** submit an expert memo and approve it from the review queue.
+10. **Live rig feed (1 min).**
+    - Start the server with `NWIS_STREAM=wits0-listen:5501`, then run `python -m nwis.cli simulate-rig --connect 127.0.0.1:5501 --speed 600 --from-md 2118`.
+    - Switch Live Ops to **● Live rig feed**. The topbar shows *LIVE · WITS-0* with packet health, and the S1 losses fire from real WITS-0 frames.
+    - Open `#/rig` on a tablet and stop the server. The rig view stays up under an OFFLINE banner. Acknowledge the alert, restart the server, and the queued acknowledgement appears in the decision log.
 
 ## 6. Feasibility and deployment at OIL
 
 - **Hardware:** one on-prem server, 8 cores and 16 GB, handles hundreds of wells. OCR throughput is about 6–10 pages/minute per core, and a legacy archive is a one-time batch.
 - **Integration:**
-  - The live stream comes from eRTMAC via WITS-0 (parser included) or WITSML log polling.
+  - The live stream comes from eRTMAC via WITS-0 over TCP (listen or connect) or WITSML 1.4.1 log polling, both built (§3.16). The item and mnemonic maps are configuration, not code.
   - Master data (tops, surveys, casing, mud) comes from existing drilling databases.
   - Documents come from the DMS or file shares.
 - **Security:** no internet egress required, and role-based views. Every extracted fact is traceable to page and character span for audit.

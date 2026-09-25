@@ -61,27 +61,27 @@ export default function OffsetMap() {
     <div style={{ display: "grid", gridTemplateColumns: "minmax(420px, 1.6fr) minmax(320px, 1fr)", gap: 12 }}>
       <div className={`card ${tilesOk ? "" : "gridbg"}`} style={{ padding: 0, height: 620, position: "relative" }}>
         {active && <MapContainer center={[active.lat, active.lon]} zoom={11} style={{ height: "100%", width: "100%" }} preferCanvas>
-          {tilesOk && <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" attribution="&copy; OpenStreetMap &copy; CARTO"
+          {tilesOk && <TileLayer url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png" attribution="&copy; OpenStreetMap &copy; CARTO"
             eventHandlers={{ tileerror: () => setTilesOk(false) }} />}
           <ClickCatcher onClick={(lat, lon) => { setCenter({ lat, lon, label: `Planned @ ${lat.toFixed(4)}, ${lon.toFixed(4)}` }); setSelId(null); }} />
           {center && <Circle center={[center.lat, center.lon]} radius={radius * 1000} pathOptions={{ color: "#3987e5", weight: 1.5, fillOpacity: 0.05, dashArray: "6 6" }} />}
           {meta.structures.map((s) => <CircleMarker key={s.id} center={[s.lat, s.lon]} radius={0} pathOptions={{ opacity: 0 }}>
             <Tooltip permanent direction="center" className="struct-label">{s.name}</Tooltip></CircleMarker>)}
           {wells.filter((w) => !w.is_active && dist(w) <= radius && w.trajectory).map((w) =>
-            <Polyline key={`t${w.id}`} positions={w.trajectory as any} pathOptions={{ color: "#8fa3b8", weight: 1.5, opacity: 0.8 }} />)}
+            <Polyline key={`t${w.id}`} positions={w.trajectory as any} pathOptions={{ color: "#6b6b6b", weight: 1.5, opacity: 0.8 }} />)}
           {wells.filter((w) => !w.is_active).map((w) => {
             const inR = dist(w) <= radius;
             const dom = dominant(w);
             const n = counts(w).reduce((s, [, v]) => s + v, 0);
             return <CircleMarker key={w.id} center={[w.lat, w.lon]} radius={5 + Math.min(n, 6) * 1.6}
-              pathOptions={{ color: w.id === selId ? "#ffffff" : "#0e1318", weight: w.id === selId ? 3 : 2, fillColor: dom ? HAZARD_COLOR[dom] : "#6b7785", fillOpacity: inR ? 0.95 : 0.25, opacity: inR ? 1 : 0.4 }}
+              pathOptions={{ color: w.id === selId ? "#000000" : "#ffffff", weight: w.id === selId ? 3 : 2, fillColor: dom ? HAZARD_COLOR[dom] : "#9e9e9e", fillOpacity: inR ? 0.95 : 0.25, opacity: inR ? 1 : 0.4 }}
               eventHandlers={{ click: (e) => { (e as any).originalEvent?.stopPropagation?.(); setSelId(w.id); } }}>
               <Tooltip>{w.id} · {w.spud_year} · {n} events{dom ? ` · mostly ${HAZARD_SHORT[dom]}` : ""}</Tooltip>
             </CircleMarker>;
           })}
           {active && <>
-            {active.trajectory && <Polyline positions={active.trajectory as any} pathOptions={{ color: "#ffffff", weight: 3, dashArray: "4 4" }} />}
-            <CircleMarker center={[active.lat, active.lon]} radius={9} pathOptions={{ color: "#ffffff", weight: 3, fillColor: "#d03b3b", fillOpacity: 1 }}>
+            {active.trajectory && <Polyline positions={active.trajectory as any} pathOptions={{ color: "#000000", weight: 3, dashArray: "4 4" }} />}
+            <CircleMarker center={[active.lat, active.lon]} radius={9} pathOptions={{ color: "#000000", weight: 3, fillColor: "#d03b3b", fillOpacity: 1 }}>
               <Tooltip permanent direction="right">{active.name}</Tooltip></CircleMarker>
           </>}
         </MapContainer>}

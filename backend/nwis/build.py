@@ -134,6 +134,8 @@ def build(fresh: bool = True, eval_wells: int = 14) -> dict:
     log(f"training sentence classifier on {len(labelled)} labelled sentences")
     clf = SentenceClassifier().fit([l["text"] for l in labelled], [l["label"] for l in labelled])
     clf.save(config.MODELS_DIR / "sentence_clf.joblib")
+    # kept so the classifier can be re-fitted with local labels (real-data adaptation, validate/volve.py)
+    (config.MODELS_DIR / "train_sentences.json").write_text(json.dumps(labelled), encoding="utf-8")
 
     log("ingesting documents through NLP/OCR pipeline")
     ing = Ingestor(db, clf)

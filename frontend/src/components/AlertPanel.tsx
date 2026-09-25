@@ -26,7 +26,7 @@ export function AlertCard({ a, selected, onClick, big = false }: { a: Alert; sel
     </div>
     <div className="msg">{a.message}</div>
     <div className="row small" style={{ gap: 8, marginTop: 4 }}>
-      {a.corroborated && <span className="pill" style={{ color: "#ff9d7a" }}>CORROBORATED</span>}
+      {a.corroborated && <span className="pill" style={{ color: "var(--serious)" }}>CORROBORATED</span>}
       {a.hazard !== "GEO" && <span className="muted">{hz(a.hazard)?.label ?? a.hazard} · confidence {fmt.pct(a.confidence)}</span>}
       {a.evidence?.length > 0 && <span className="muted">· {a.evidence.length} offset evidence</span>}
       {a.p_value != null && <span className="muted" title="Conformal p-value: how often this well's own recent normal drilling scored this high">· p={a.p_value < 0.001 ? "<0.001" : a.p_value.toFixed(3)}</span>}

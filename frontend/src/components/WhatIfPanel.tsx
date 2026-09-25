@@ -71,7 +71,7 @@ export default function WhatIfPanel({ loc, sections, radius, onScenario }: {
           <td>{fmName(d.formation)}</td>
           <td><span className="swatch" style={{ background: HAZARD_COLOR[d.hazard] }} /> {HAZARD_SHORT[d.hazard]}</td>
           <td className="num">{fmt.pct(d.baseline)}</td><td className="num">{fmt.pct(d.scenario)}</td>
-          <td className="num" style={{ color: d.delta > 0 ? LEVEL.critical.color : "#57d36a", fontWeight: 650 }}>{d.delta > 0 ? "▲ +" : "▼ "}{Math.round(d.delta * 100)} pts</td>
+          <td className="num" style={{ color: d.delta > 0 ? LEVEL.critical.color : "var(--good-ink)", fontWeight: 650 }}>{d.delta > 0 ? "▲ +" : "▼ "}{Math.round(d.delta * 100)} pts</td>
         </tr>)}</tbody>
       </table> : <div className="small muted">No formation-level peak risk moved by 2 points or more.</div>}
       {res.window_checks.scenario.filter((c) => c.findings.length).map((c) => <div key={c.formation} className="small">

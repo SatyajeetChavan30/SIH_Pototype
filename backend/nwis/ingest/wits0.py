@@ -12,9 +12,14 @@ it is configurable because rigs sometimes remap channels.
 """
 from __future__ import annotations
 
+import datetime as dt
+import json
+import os
 from typing import Iterable, Iterator
 
 DEFAULT_MAP = {
+    "0105": "date",          # YYMMDD
+    "0106": "time",          # HHMMSS
     "0108": "hole_depth",
     "0110": "md",            # bit depth (measured)
     "0111": "tvd",           # bit depth (vertical)
@@ -30,6 +35,22 @@ DEFAULT_MAP = {
     "0132": "mw",            # mud density in
     "0140": "gas",
 }
+# Channels NWIS uses that Record 01 does not carry. These item ids are NWIS defaults, not a WITS standard
+# assignment: confirm the real codes with OIL's eRTMAC / mud-logging vendor and override with NWIS_WITS_MAP.
+EXTENSION_MAP = {
+    "0824": "gr",            # MWD gamma ray (Record 08 area)
+    "0142": "ecd",           # equivalent circulating density, if the rig computes it
+}
+
+
+def active_map() -> dict[str, str]:
+    """DEFAULT_MAP + EXTENSION_MAP, overridden by a JSON file named in NWIS_WITS_MAP ({"item": "channel"})."""
+    m = {**DEFAULT_MAP, **EXTENSION_MAP}
+    path = os.environ.get("NWIS_WITS_MAP")
+    if path:
+        with open(path, encoding="utf-8") as f:
+            m.update({str(k): str(v) for k, v in json.load(f).items()})
+    return m
 
 
 def parse_packets(lines: Iterable[str], mapping: dict[str, str] | None = None) -> Iterator[dict]:
@@ -60,12 +81,65 @@ def parse_packets(lines: Iterable[str], mapping: dict[str, str] | None = None) -
             continue
 
 
+class Wits0Decoder:
+    """Incremental decoder for a byte stream (TCP or serial-over-IP): bytes in, complete packets out.
+
+    Packets split across reads are reassembled; bytes that are not valid ASCII, stray lines and
+    half-received packets after a reconnect are dropped without raising.
+    """
+
+    def __init__(self, mapping: dict[str, str] | None = None):
+        self.mapping = mapping or active_map()
+        self._buf = ""
+        self._cur: dict | None = None
+        self.packets = 0
+        self.bad_lines = 0
+
+    def feed(self, data: bytes) -> list[dict]:
+        self._buf += data.decode("ascii", errors="replace")
+        *lines, self._buf = self._buf.replace("\r", "\n").split("\n")
+        out = []
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            if line == "&&":
+                self._cur = {}
+            elif line == "!!":
+                if self._cur:
+                    out.append(self._cur)
+                    self.packets += 1
+                self._cur = None
+            elif self._cur is not None and len(line) >= 5 and line[:4].isdigit():
+                key = self.mapping.get(line[:4])
+                if key is None:
+                    continue
+                try:
+                    self._cur[key] = float(line[4:].strip())
+                except ValueError:
+                    self.bad_lines += 1
+            else:
+                self.bad_lines += 1
+        return out
+
+
+def packet_time(p: dict) -> float | None:
+    """Epoch seconds from WITS 0105 (YYMMDD) + 0106 (HHMMSS), if both are present."""
+    if "date" not in p or "time" not in p:
+        return None
+    try:
+        d, t = f"{int(p['date']):06d}", f"{int(p['time']):06d}"
+        return dt.datetime.strptime(d + t, "%y%m%d%H%M%S").replace(tzinfo=dt.timezone.utc).timestamp()
+    except ValueError:
+        return None
+
+
 def to_packet(sample: dict, mapping: dict[str, str] | None = None) -> str:
-    """Encode a sample as a WITS-0 packet (used by the simulator's eRTMAC relay mode)."""
+    """Encode a sample as a WITS-0 packet (used by the rig simulator)."""
     inv = {v: k for k, v in (mapping or DEFAULT_MAP).items()}
     lines = ["&&"]
     for k, v in sample.items():
         if k in inv and v is not None:
-            lines.append(f"{inv[k]}{float(v):.3f}")
+            lines.append(f"{inv[k]}{int(v):06d}" if k in ("date", "time") else f"{inv[k]}{float(v):.3f}")
     lines.append("!!")
     return "\r\n".join(lines) + "\r\n"

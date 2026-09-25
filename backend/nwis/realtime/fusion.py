@@ -114,16 +114,19 @@ class AlertManager:
             self.changed.add(key)
             self._log(a, "cleared", t, a.md, reason=reason)
 
-    def ack(self, alert_id: str, actor: str = "RTOC", t: float | None = None, md: float | None = None) -> Alert | None:
-        for a in self.alerts.values():
-            if a.id == alert_id:
-                a.status = "acknowledged"
-                a.history.append({"t": t if t is not None else a.updated_t, "md": md if md is not None else a.md,
-                                  "level": a.level, "event": f"acknowledged by {actor}"})
-                self.changed.add(a.key)
-                self._log(a, "acknowledged", t, md, actor=actor)
-                return a
-        return None
+    def ack(self, alert_id: str, actor: str = "RTOC", t: float | None = None, md: float | None = None,
+            key: str | None = None, **extra) -> Alert | None:
+        """Acknowledge by id; fall back to the stable key (an ack queued on an offline tablet may carry an id from
+        an earlier connection)."""
+        a = next((x for x in self.alerts.values() if x.id == alert_id), None) or (self.alerts.get(key) if key else None)
+        if a is None:
+            return None
+        a.status = "acknowledged"
+        a.history.append({"t": t if t is not None else a.updated_t, "md": md if md is not None else a.md,
+                          "level": a.level, "event": f"acknowledged by {actor}"})
+        self.changed.add(a.key)
+        self._log(a, "acknowledged", t, md, actor=actor, **extra)
+        return a
 
     def active_lookahead(self, hazard: str, md: float, margin: float = 60.0) -> Alert | None:
         for a in self.alerts.values():

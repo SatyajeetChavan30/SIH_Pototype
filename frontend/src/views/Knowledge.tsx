@@ -82,7 +82,7 @@ function Search({ initial }: { initial?: string }) {
     {res && <div className="col" style={{ gap: 8 }}>
       {res.results.map((r: any) => <div key={r.id} className="card" style={{ padding: "9px 12px" }}>
         <div className="row small" style={{ gap: 8 }}>
-          <span className="pill" style={{ color: r.type === "event" ? "#5fa8ff" : r.type === "lesson" ? "#57d36a" : "var(--ink-3)" }}>{r.type.toUpperCase()}</span>
+          <span className="pill" style={{ color: r.type === "event" ? "var(--info-ink)" : r.type === "lesson" ? "var(--good-ink)" : "var(--ink-3)" }}>{r.type.toUpperCase()}</span>
           <b>{r.well_id}</b>
           {r.formation && <span className="muted">{fmName(r.formation)}</span>}
           {r.md != null && <span className="muted num">{fmt.m(r.md)}</span>}
@@ -127,9 +127,9 @@ function AarModal({ eventId, onClose }: { eventId: string; onClose: () => void }
     <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} disabled={done}
       style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--line-strong)", borderRadius: 8, padding: 8 }} />
     <div className="row" style={{ marginTop: 6 }}>
-      {done ? <span className="small" style={{ color: "#57d36a" }}>✔ Approved: this lesson now appears in search, Ask NWIS, hazard briefs and live recommendations.</span>
+      {done ? <span className="small" style={{ color: "var(--good-ink)" }}>✔ Approved: this lesson now appears in search, Ask NWIS, hazard briefs and live recommendations.</span>
         : <button className="btn sm primary" disabled={text.trim().length < 20} onClick={approve}>Approve as {getActor()} and publish lesson</button>}
-      {err && <span className="small" style={{ color: "#ff8080" }}>{err}</span>}
+      {err && <span className="small" style={{ color: "var(--bad-ink)" }}>{err}</span>}
     </div>
   </section>} />;
 }
@@ -190,7 +190,7 @@ function Graph() {
     }
     return { nodes, links };
   }, [g]);
-  const color = (n: any) => n.type === "hazard" ? HAZARD_COLOR[n.id.split(":")[1]] : n.type === "formation" ? fm(n.id.split(":")[1])?.color : n.type === "well" ? "#e8eef4" : n.type === "cause" ? "#8fa3b8" : "#b9c4cf";
+  const color = (n: any) => n.type === "hazard" ? HAZARD_COLOR[n.id.split(":")[1]] : n.type === "formation" ? fm(n.id.split(":")[1])?.color : n.type === "well" ? "var(--ink)" : n.type === "cause" ? "var(--ink-3)" : "var(--ink-2)";
   return <div className="card">
     <div className="row wrap" style={{ marginBottom: 8 }}>
       <label className="row small" style={{ gap: 6 }}>Formation <select value={formation} onChange={(e) => setFormation(e.target.value)}>
@@ -205,7 +205,7 @@ function Graph() {
         const ok = l.rel === "treated_with";
         const ratio = ok ? l.success / l.count : 1;
         return <g key={i}>
-          <line x1={l.source.x} y1={l.source.y} x2={l.target.x} y2={l.target.y} stroke={ok ? (ratio >= 0.55 ? "#57d36a" : ratio <= 0.3 ? "#ff8080" : "#8fa3b8") : "var(--line-strong)"}
+          <line x1={l.source.x} y1={l.source.y} x2={l.target.x} y2={l.target.y} stroke={ok ? (ratio >= 0.55 ? "var(--good-ink)" : ratio <= 0.3 ? "var(--bad-ink)" : "var(--ink-3)") : "var(--line-strong)"}
             strokeWidth={Math.min(1 + l.count * 0.6, 5)} opacity={0.7} />
           {ok && <text x={(l.source.x + l.target.x) / 2} y={(l.source.y + l.target.y) / 2 - 3} fontSize={9.5} fill="var(--ink-2)" textAnchor="middle">{l.success}/{l.count}</text>}
         </g>;
@@ -213,12 +213,12 @@ function Graph() {
       {layout.nodes.map((n: any) => <g key={n.id} transform={`translate(${n.x},${n.y})`} onMouseMove={(e) => show(e, <div><b>{n.label}</b><br /><span className="muted">{n.type} · {n.count} events</span></div>)} onMouseLeave={hide}>
         {n.type === "cause" ? <rect x={-7} y={-7} width={14} height={14} transform="rotate(45)" fill={color(n)} /> :
           n.type === "mitigation" ? <rect x={-8} y={-8} width={16} height={16} rx={3} fill="var(--surface-1)" stroke={color(n)} strokeWidth={2} /> :
-            <circle r={n.type === "well" ? 5 : 10 + Math.min(n.count, 10)} fill={color(n)} stroke="#0b0f14" strokeWidth={2} />}
+            <circle r={n.type === "well" ? 5 : 10 + Math.min(n.count, 10)} fill={color(n)} stroke="var(--page)" strokeWidth={2} />}
         <text x={n.type === "mitigation" ? 12 : n.type === "well" ? -8 : 0} y={n.type === "mitigation" || n.type === "well" ? 4 : -14} fontSize={10.5}
           textAnchor={n.type === "mitigation" ? "start" : n.type === "well" ? "end" : "middle"} fill="var(--ink)">{n.label.length > 30 ? n.label.slice(0, 29) + "…" : n.label}</text>
       </g>)}
     </svg>}
-    <div className="row wrap small" style={{ gap: 12 }}><span style={{ color: "#57d36a" }}>━ usually cured (≥55%)</span><span style={{ color: "#ff8080" }}>━ rarely cured (≤30%)</span><span className="muted">━ mixed</span></div>
+    <div className="row wrap small" style={{ gap: 12 }}><span style={{ color: "var(--good-ink)" }}>━ usually cured (≥55%)</span><span style={{ color: "var(--bad-ink)" }}>━ rarely cured (≤30%)</span><span className="muted">━ mixed</span></div>
     {tip}
   </div>;
 }

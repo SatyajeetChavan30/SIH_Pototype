@@ -66,14 +66,14 @@ export default function DepthRibbon({ bitMd, bins, tops, zones, hazards, above =
         const sdPx = Math.abs(y(t.md + t.sd) - y(t.md));
         return <g key={code} onMouseMove={(e) => show(e, <div><b>{fmName(code)} top</b> {fmt.m(t.md)} MD / {fmt.m(t.tvd)} TVD<br />
           <span className="muted">{t.picked ? "picked (actual)" : `predicted ±${t.sd} m from ${t.n} offsets`}{t.shifted_m ? ` · re-anchored ${t.shifted_m > 0 ? "+" : ""}${t.shifted_m} m` : ""}</span></div>)} onMouseLeave={hide}>
-          {!t.picked && <rect x={44} y={y(t.md) - sdPx} width={W - 44} height={sdPx * 2} fill="#9fb3c8" opacity={0.08} />}
-          <line x1={44} x2={W} y1={y(t.md)} y2={y(t.md)} stroke={t.picked ? "#e8eef4" : "#9fb3c8"} strokeWidth={t.picked ? 1.5 : 1} strokeDasharray={t.picked ? "" : "4 3"} />
+          {!t.picked && <rect x={44} y={y(t.md) - sdPx} width={W - 44} height={sdPx * 2} fill="#000" opacity={0.06} />}
+          <line x1={44} x2={W} y1={y(t.md)} y2={y(t.md)} stroke={t.picked ? "var(--ink)" : "var(--ink-3)"} strokeWidth={t.picked ? 1.5 : 1} strokeDasharray={t.picked ? "" : "4 3"} />
         </g>;
       })}
       <g>
-        <line x1={40} x2={W} y1={y(bitMd)} y2={y(bitMd)} stroke="#fff" strokeWidth={2} />
-        <polygon points={`${34},${y(bitMd) - 6} ${44},${y(bitMd)} ${34},${y(bitMd) + 6}`} fill="#fff" />
-        <text x={W - 2} y={y(bitMd) - 4} fontSize={10} fill="#fff" textAnchor="end" fontWeight={700}>BIT {Math.round(bitMd)} m</text>
+        <line x1={40} x2={W} y1={y(bitMd)} y2={y(bitMd)} stroke="var(--ink)" strokeWidth={2} />
+        <polygon points={`${34},${y(bitMd) - 6} ${44},${y(bitMd)} ${34},${y(bitMd) + 6}`} fill="var(--ink)" />
+        <text x={W - 2} y={y(bitMd) - 4} fontSize={10} fill="var(--ink)" textAnchor="end" fontWeight={700}>BIT {Math.round(bitMd)} m</text>
       </g>
     </svg>
     <div className="small muted" style={{ marginTop: 4 }}>Cells: blended offset-evidence + ML risk of each hazard within ±30 m (darker = lower). Outlined: offset-event clusters projected by formation. Dashed lines: predicted tops ±1σ; solid: picked tops.</div>

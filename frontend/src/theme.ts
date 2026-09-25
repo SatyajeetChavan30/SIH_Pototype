@@ -1,5 +1,5 @@
 // Hazard identity colors: validated categorical palette (dark steps), fixed order, never cycled.
-// Validated against the app surface #141a21: all adjacent pairs pass CVD/normal-vision/contrast checks.
+// Originally validated against dark surface #141a21; all hues are mid-dark and remain legible on the white theme.
 export const HAZARD_COLOR: Record<string, string> = {
   LOSS: "#3987e5",
   KICK: "#d95926",
@@ -20,12 +20,12 @@ export const HAZARD_ABBR: Record<string, string> = {
 export const LEVEL: Record<string, { color: string; icon: string; label: string }> = {
   critical: { color: "#d03b3b", icon: "▲", label: "CRITICAL" },
   warning: { color: "#ec835a", icon: "◆", label: "WARNING" },
-  watch: { color: "#fab219", icon: "●", label: "WATCH" },
-  info: { color: "#8fa3b8", icon: "i", label: "INFO" },
+  watch: { color: "#b27a00", icon: "●", label: "WATCH" },
+  info: { color: "#6b6b6b", icon: "i", label: "INFO" },
 };
 
 // Sequential risk ramp: one hue (orange), receding to the surface at 0
-const SURF = [0x1b, 0x23, 0x2c];
+const SURF = [0xf5, 0xf5, 0xf5];
 const HOT = [0xf0, 0x7a, 0x3c];
 export function riskColor(p: number): string {
   const t = Math.min(1, Math.sqrt(Math.max(0, p) / 0.8));

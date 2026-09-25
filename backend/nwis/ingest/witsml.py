@@ -55,7 +55,9 @@ def parse_drill_reports(xml_bytes: bytes) -> list[dict]:
     return out
 
 
-def reports_to_pages(reports: list[dict]) -> list[PageText]:
+def reports_to_pages(reports: list[dict], include_codes: bool = True) -> list[PageText]:
+    """include_codes=False renders free text only (every line tagged OPS, no [proprietaryCode]) so an evaluation
+    against the operator's activity codes cannot read the answer off the page."""
     pages = []
     for i, r in enumerate(reports):
         lines = [f"DAILY DRILLING REPORT    Report No: {i + 1}    Date: {r['date']}", f"Well: {r['well']}"]
@@ -63,9 +65,10 @@ def reports_to_pages(reports: list[dict]) -> list[PageText]:
             lines.append(f"MW: {r['mw_ppg']:.2f} ppg")
         lines += ["", "TIME LOG"]
         for a in r["activities"]:
-            code = "NPT" if a["state"].lower() == "fail" or "interruption" in a["code"].lower() else "OPS"
+            npt = a["state"].lower() == "fail" or "interruption" in a["code"].lower()
+            code = "NPT" if (npt and include_codes) else "OPS"
             depth = f" @ {a['md']:.0f} m" if a["md"] is not None else ""
-            hint = f" [{a['code']}]" if a["code"] else ""
+            hint = f" [{a['code']}]" if (a["code"] and include_codes) else ""
             comment = a["comments"].rstrip(".")
             lines.append(f"{a['start'] or '00:00'}-{a['end'] or '00:00'}  {code:<7} {comment}{depth}.{hint}")
         pages.append(PageText(i + 1, "\n".join(lines), False, None))

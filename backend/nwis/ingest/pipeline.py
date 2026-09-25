@@ -554,7 +554,9 @@ class Ingestor:
                 self.db.insert("wells", {"id": wname, "name": wname, "structure_id": "IMPORTED", "source": "witsml",
                                          "synthetic": 0, "is_active": 0})
         self._ctx_cache.clear()
-        return self._ingest_pages(path, pages, "DDR", title or path.name, None, source)
+        # the XML names its well; public names like "15/9-F-11" do not match the DDR header pattern in the text
+        hint = reports[0]["well"] if reports and reports[0]["well"] != "UNKNOWN" else None
+        return self._ingest_pages(path, pages, "DDR", title or path.name, hint, source)
 
     def _ingest_pages(self, path: Path, pages: list[PageText], kind_hint, title, well_hint, source) -> dict:
         doc_id = doc_id_for(path)

@@ -10,6 +10,7 @@ export interface Meta {
   llm: { backend: string; model: string | null };
   asr?: { available: boolean; model: string | null; hint: string | null };
   top_pick_mode?: string;
+  stream?: { live_available: boolean; spec: string; describe: string };
   build: { seed: number; seconds: number; n_wells: number; n_docs: number; ocr_pages: number } | null;
   formation_order: string[];
   ribbon_hazards: Hazard[];
@@ -78,7 +79,10 @@ export interface LiveStatus {
   mw: number; ecd: number; window: { min_mw: number | null; max_ecd: number | null } | null; picked: Record<string, number>;
   zones_ahead: Zone[]; progress: number; episode: string | null;
   alert_load?: AlertLoad; budget?: BudgetState; session_id?: string; digest?: DigestItem[];
+  mode?: "live" | "replay"; waiting?: boolean; top_pick_mode?: string; stream?: StreamStats | null;
 }
+export interface StreamStats { kind: string; describe: string; connected: boolean; peer: string | null; packets: number; errors: number;
+  reconnects: number; last_packet_age_s: number | null; last_error: string | null; derived: string[]; dropped: number }
 export interface AlertLoad { window_h: number; opened: number; non_critical: number; per_hour: number; non_critical_per_hour: number; budget_per_hour: number; within_budget: boolean }
 export interface BudgetState { budget_per_hour: number; alpha: number; calibrated: Record<string, boolean>; reservoir: Record<string, number>; suppressed: Record<string, number>; passed: Record<string, number> }
 export interface DigestItem { t: number; md: number; hazard: string; detector: string; level: string; title: string; message: string; p_value: number | null; reason: string }

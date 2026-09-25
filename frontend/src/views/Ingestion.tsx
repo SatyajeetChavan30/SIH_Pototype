@@ -5,8 +5,8 @@ import MemoCard from "../components/MemoCard";
 import { HAZARD_COLOR, HAZARD_SHORT, fmt } from "../theme";
 
 const ROLE_COLOR: Record<string, string> = {
-  event: "#5fa8ff", action: "#57d36a", outcome: "#b9c4cf", negated: "#ff8080", hypothetical: "#fab219", lesson: "#9085e9",
-  continuation: "#8fa3b8", top: "#8fa3b8",
+  event: "var(--info-ink)", action: "var(--good-ink)", outcome: "var(--ink-2)", negated: "var(--bad-ink)", hypothetical: "var(--warn-ink)", lesson: "#9085e9",
+  continuation: "var(--ink-3)", top: "var(--ink-3)",
 };
 const ROLE_HELP: Record<string, string> = {
   event: "hazard occurred → structured event", action: "mitigation linked to the open event", outcome: "success/failure of the last action",
@@ -104,10 +104,10 @@ export default function Ingestion() {
           {res.events.length === 0 && <div className="small muted">No hazard events in this document.</div>}
           {res.events.map((e: any) => <div key={e.id} className="card" style={{ marginBottom: 8, padding: "8px 10px" }}>
             <div className="row small" style={{ gap: 6 }}><span className="swatch" style={{ background: HAZARD_COLOR[e.hazard] }} /><b>{HAZARD_SHORT[e.hazard]}</b> · {e.id}
-              <span className="pill" style={{ marginLeft: "auto", color: e.status === "auto" ? "#57d36a" : "#fab219" }}>{e.status === "auto" ? "AUTO-ACCEPTED" : "SENT TO REVIEW"}</span></div>
+              <span className="pill" style={{ marginLeft: "auto", color: e.status === "auto" ? "var(--good-ink)" : "var(--warn-ink)" }}>{e.status === "auto" ? "AUTO-ACCEPTED" : "SENT TO REVIEW"}</span></div>
             <div className="small">{e.summary}</div>
             <div className="small muted">depth {fmt.m(e.md)} ({e.depth_source}) · formation {fmName(e.formation)} ({e.formation_source}) · confidence {fmt.pct(e.confidence)}</div>
-            {e.actions.length > 0 && <div className="small">Actions: {e.actions.map((a: any, i: number) => <span key={i} style={{ color: a.success ? "#57d36a" : "#ff8080" }}>{a.code}{a.success ? " ✔" : " ✖"}{i < e.actions.length - 1 ? " → " : ""}</span>)}</div>}
+            {e.actions.length > 0 && <div className="small">Actions: {e.actions.map((a: any, i: number) => <span key={i} style={{ color: a.success ? "var(--good-ink)" : "var(--bad-ink)" }}>{a.code}{a.success ? " ✔" : " ✖"}{i < e.actions.length - 1 ? " → " : ""}</span>)}</div>}
             {e.citations?.[0] && <span className="small cite" onClick={() => openCitation(e.citations[0])}>view evidence (p.{e.citations[0].page_no})</span>}
           </div>)}
           {res.lessons.length > 0 && <><h4 className="small muted">LESSONS ({res.lessons.length})</h4>{res.lessons.map((l: any) => <div key={l.id} className="quote small" style={{ marginBottom: 4 }}>{l.text}</div>)}</>}
@@ -121,10 +121,10 @@ export default function Ingestion() {
               <div className="row small" style={{ gap: 6 }}>
                 <span className="pill" style={{ color: ROLE_COLOR[s.role] ?? "var(--ink-3)" }}>{s.role}</span>
                 {s.hazard && <span><span className="swatch" style={{ background: HAZARD_COLOR[s.hazard] }} /> {HAZARD_SHORT[s.hazard]}</span>}
-                {s.negated?.length > 0 && <span style={{ color: "#ff8080" }}>negated: {s.negated.join(",")}</span>}
-                {s.hypothetical && <span style={{ color: "#fab219" }}>hypothetical</span>}
+                {s.negated?.length > 0 && <span style={{ color: "var(--bad-ink)" }}>negated: {s.negated.join(",")}</span>}
+                {s.hypothetical && <span style={{ color: "var(--warn-ink)" }}>hypothetical</span>}
                 {s.mitigations?.length > 0 && <span className="muted">{s.mitigations.join(", ")}</span>}
-                {s.outcome && <span style={{ color: s.outcome === "success" ? "#57d36a" : "#ff8080" }}>{s.outcome}</span>}
+                {s.outcome && <span style={{ color: s.outcome === "success" ? "var(--good-ink)" : "var(--bad-ink)" }}>{s.outcome}</span>}
                 {s.depths?.length > 0 && <span className="muted num">{s.depths.map((d: number) => `${Math.round(d)} m`).join(", ")}</span>}
                 {s.clf_top && <span className="muted" style={{ marginLeft: "auto" }}>ML: {s.clf_top} {fmt.pct(s.clf_p)}</span>}
               </div>

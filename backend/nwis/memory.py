@@ -52,8 +52,9 @@ def handover_brief(session, hours: float = 12.0) -> dict:
     st = session.status()
     t_now = st["t"]
     t0 = t_now - hours * 3600
-    idx = np.nonzero(session.data["t"][: max(session.i, 1)] >= t0)[0]
-    md_start = float(session.data["md"][idx[0]]) if len(idx) else st["md"]
+    t_arr = np.asarray(session.data["t"][: max(session.i, 1)], dtype=float)
+    idx = np.nonzero(t_arr >= t0)[0]
+    md_start = float(session.data["md"][int(idx[0])]) if len(idx) else st["md"]
     cites = _Cites()
     sections: list[dict] = []
 

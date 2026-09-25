@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { api } from "./api";
 import type { Citation, Formation, HazardDef, Meta } from "./types";
 
-export type View = "live" | "map" | "correlation" | "knowledge" | "planning" | "ingest" | "analytics";
+export type View = "live" | "map" | "correlation" | "knowledge" | "planning" | "ingest" | "analytics" | "rig";
 
 interface AppCtx {
   meta: Meta;
@@ -23,7 +23,7 @@ function parseHash(): [View, Record<string, string>] {
   const [v, q] = h.split("?");
   const params: Record<string, string> = {};
   new URLSearchParams(q || "").forEach((val, k) => { params[k] = val; });
-  const views: View[] = ["live", "map", "correlation", "knowledge", "planning", "ingest", "analytics"];
+  const views: View[] = ["live", "map", "correlation", "knowledge", "planning", "ingest", "analytics", "rig"];
   return [(views.includes(v as View) ? v : "live") as View, params];
 }
 
@@ -34,7 +34,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [cite, setCite] = useState<Citation | null>(null);
 
   useEffect(() => {
-    api<Meta>("/api/meta").then(setMeta).catch((e) => setErr(String(e.message || e)));
+    // cache /api/meta so the rig-site view still opens when the link to the server is down
+    api<Meta>("/api/meta").then((m) => { setMeta(m); try { localStorage.setItem("nwis.meta", JSON.stringify(m)); } catch { /* best-effort */ } })
+      .catch((e) => {
+        let cached: Meta | null = null;
+        try { cached = JSON.parse(localStorage.getItem("nwis.meta") || "null"); } catch { cached = null; }
+        if (cached) setMeta(cached); else setErr(String(e.message || e));
+      });
     const f = () => setRoute(parseHash());
     window.addEventListener("hashchange", f);
     return () => window.removeEventListener("hashchange", f);

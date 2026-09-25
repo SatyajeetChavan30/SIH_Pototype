@@ -31,6 +31,8 @@ from ..ingest.voice import asr_status, transcribe
 from ..memory import after_action_review, approve_aar, handover_brief
 from ..realtime.analogs import AnalogIndex
 from ..realtime.engine import LiveSession
+from ..realtime.hub import LiveHub, init_payload, tick_payload
+from ..realtime.sources import from_spec
 from ..report import hazard_brief
 from ..risk.evidence import risk_profile
 from ..risk.model import RiskModel
@@ -78,6 +80,7 @@ class State:
         self._index: SearchIndex | None = None
         self._analogs: AnalogIndex | None = None
         self.clf: SentenceClassifier | None = None
+        self.hub: LiveHub | None = None
         self.ready = False
 
     def load(self):
@@ -115,9 +118,18 @@ S = State()
 @asynccontextmanager
 async def lifespan(_app):
     S.load()
+    task = None
     if S.ready:  # warm the search + analog indexes in the background
         threading.Thread(target=lambda: (S.index, S.analogs), daemon=True).start()
+        src = from_spec(config.STREAM)
+        if src is not None:   # a real rig feed: one shared session for every console
+            S.hub = await asyncio.to_thread(LiveHub, S.kb, S.model, src, lambda rows: audit.append_many(S.db, rows),
+                                            lambda: S._analogs)
+            task = asyncio.create_task(S.hub.run())
     yield
+    if task is not None:
+        task.cancel()
+        S.hub.source.stop()
 
 
 app = FastAPI(title="eRTMAC-NWIS", version="0.1.0", lifespan=lifespan,
@@ -154,6 +166,8 @@ def meta():
     return J({"ontology": ontology_payload(), "structures": list(k.structures.values()), "active_well": k.active_id,
               "ocr": ocr_status(), "llm": llm_status(), "asr": asr_status(), "build": S.db.kv_get("build_info"),
               "synthetic": True, "top_pick_mode": config.TOP_PICK_MODE,
+              "stream": {"live_available": S.hub is not None, "spec": config.STREAM,
+                         "describe": S.hub.source.describe() if S.hub else "stored replay"},
               "formation_order": FORMATION_ORDER, "ribbon_hazards": RIBBON_HAZARDS})
 
 
@@ -478,6 +492,15 @@ def review_action(rid: str, body: dict):
 
 
 # ---------------------------------------------------------------------------- analytics & feedback
+@app.get("/api/stream/status")
+def stream_status():
+    if S.hub is None:
+        return J({"mode": "replay", "spec": config.STREAM})
+    st = S.hub.session.status()
+    return J({"mode": "live", "spec": config.STREAM, "in_gap": S.hub.in_gap, "samples": S.hub.session.n,
+              "bit_md": st["md"], "subscribers": len(S.hub.subs), **(st.get("stream") or {})})
+
+
 FEEDBACK_VERDICTS = ("useful", "false_alarm", "not_actionable")
 
 
@@ -539,7 +562,7 @@ def analytics():
               "events_by_period": [{"period": f"{y}-{y + 4}", **dict(c)} for y, c in sorted(by_year.items())],
               "risk_metrics": S.db.kv_get("risk_metrics"), "extraction_eval": S.db.kv_get("extraction_eval"),
               "feedback": fb, "inventory": inv, "build": S.db.kv_get("build_info"), "audit": audit.summary(S.db),
-              "live_eval": S.db.kv_get("live_eval")})
+              "live_eval": S.db.kv_get("live_eval"), "public_eval": S.db.kv_get("public_eval")})
 
 
 # ---------------------------------------------------------------------------- live (eRTMAC stream)
@@ -550,6 +573,9 @@ async def live(ws: WebSocket):
         await ws.send_json({"type": "error", "message": "knowledge base not built"})
         await ws.close()
         return
+    if ws.query_params.get("mode") == "live" and S.hub is not None:
+        await _live_feed(ws, S.hub)
+        return
     session = await asyncio.to_thread(LiveSession, S.kb, S.model, S.analogs)
     state = {"playing": True, "speed": 4}
     lock = asyncio.Lock()   # the session is not thread-safe: never step it while a jump/reset is running
@@ -559,15 +585,10 @@ async def live(ws: WebSocket):
         if rows:
             audit.append_many(S.db, rows)
 
-    def init_msg():
-        return {"type": "init", "session_id": session.session_id, "well": _well_summary(S.kb.active),
-                "episodes": session.episodes,
-                "zones": [session._zone_payload(z) | {"evidence": z["evidence"][:6]} for z in session.zones],
-                "tops": session.tops, "window": session.win["formations"], "grid": session.win["grid"],
-                "status": session.status(), "alerts": session.alerts.snapshot(),
-                "ribbon": session.ribbon(0, 6000), "sections": S.kb.active.sections}
+    def send(msg: dict):
+        return ws.send_text(json.dumps(_clean(msg), default=_json_default))
 
-    await ws.send_text(json.dumps(_clean(init_msg()), default=_json_default))
+    await send(init_payload(session, _well_summary(S.kb.active), S.kb.active.sections))
 
     async def reader():
         while True:
@@ -587,24 +608,13 @@ async def live(ws: WebSocket):
                         await asyncio.to_thread(session.reset, 0)
                     state["playing"] = True
                     flush_audit()
-                    await ws.send_text(json.dumps(_clean(init_msg()), default=_json_default))
-            elif cmd == "ack":
+                    await send(init_payload(session, _well_summary(S.kb.active), S.kb.active.sections))
+            else:
                 async with lock:
-                    session.ack(msg.get("id"), str(msg.get("actor") or "RTOC")[:40])
+                    reply = await _common_command(session, msg)
                     flush_audit()
-            elif cmd == "budget":
-                async with lock:
-                    session.set_budget(float(msg.get("value", 1.0)))
-                    flush_audit()
-                    await ws.send_text(json.dumps(_clean({"type": "tick", "samples": [], "alerts": [],
-                                                          "status": session.status(), "events": []}),
-                                                  default=_json_default))
-            elif cmd == "handover":
-                async with lock:
-                    brief = await asyncio.to_thread(handover_brief, session, float(msg.get("hours", 12)))
-                await ws.send_text(json.dumps(_clean({"type": "handover", **brief}), default=_json_default))
-            elif cmd == "analogs":
-                await ws.send_text(json.dumps(_clean({"type": "analogs", **session.analog_snapshot()}), default=_json_default))
+                if reply:
+                    await send(reply)
 
     async def writer():
         tick = 0
@@ -613,25 +623,79 @@ async def live(ws: WebSocket):
             async with lock:
                 if not state["playing"] or session.i >= session.n:
                     if session.alerts.changed:
-                        await ws.send_text(json.dumps(_clean({"type": "tick", "samples": [], "alerts": session.alerts.pop_changed(),
-                                                              "status": session.status(), "events": []}), default=_json_default))
+                        await send({"type": "tick", "samples": [], "alerts": session.alerts.pop_changed(),
+                                    "status": session.status(), "events": []})
                     continue
                 r = await asyncio.to_thread(session.step, state["speed"])
                 flush_audit()
             tick += 1
-            r["type"] = "tick"
-            for smp in r["samples"]:
-                smp.pop("fm_est", None)
-            if tick % 20 == 0 or r["events"]:
-                r["ribbon"] = session.ribbon(0, 6000)
-                r["zones"] = [session._zone_payload(z) | {"evidence": z["evidence"][:6]} for z in session.zones]
-                r["tops"] = session.tops
-            await ws.send_text(json.dumps(_clean(r), default=_json_default))
+            await send(tick_payload(session, r, full=tick % 20 == 0))
 
     try:
         await asyncio.gather(reader(), writer())
     except (WebSocketDisconnect, RuntimeError):
         pass
+
+
+def _ack_extra(msg: dict) -> dict:
+    """Acknowledgements queued on an offline rig tablet carry when they were really made."""
+    extra = {}
+    if msg.get("acted_at"):
+        extra["acted_at"] = str(msg["acted_at"])[:40]
+    if msg.get("queued_offline"):
+        extra["queued_offline"] = True
+    return extra
+
+
+async def _common_command(session: LiveSession, msg: dict) -> dict | None:
+    """Commands shared by replay and live consoles. Caller holds the session lock."""
+    cmd = msg.get("cmd")
+    if cmd == "ack":
+        session.ack(msg.get("id"), str(msg.get("actor") or "RTOC")[:40], key=msg.get("key"), **_ack_extra(msg))
+        return {"type": "tick", "samples": [], "alerts": session.alerts.pop_changed(), "status": session.status(),
+                "events": []}
+    if cmd == "budget":
+        session.set_budget(float(msg.get("value", 1.0)))
+        return {"type": "tick", "samples": [], "alerts": [], "status": session.status(), "events": []}
+    if cmd == "handover":
+        return {"type": "handover", **await asyncio.to_thread(handover_brief, session, float(msg.get("hours", 12)))}
+    if cmd == "analogs":
+        return {"type": "analogs", **session.analog_snapshot()}
+    return None
+
+
+async def _live_feed(ws: WebSocket, hub: LiveHub) -> None:
+    """A console attached to the shared live session. Play/pause/speed/jump do not exist on a real feed."""
+    q = hub.subscribe()
+
+    def send(msg: dict):
+        return ws.send_text(json.dumps(_clean(msg), default=_json_default))
+
+    async with hub.lock:
+        await send(init_payload(hub.session, _well_summary(S.kb.active), S.kb.active.sections))
+
+    async def reader():
+        while True:
+            msg = json.loads(await ws.receive_text())
+            async with hub.lock:
+                reply = await _common_command(hub.session, msg)
+                audit.append_many(S.db, hub.session.pop_audit())
+            if reply:
+                if reply["type"] == "tick":
+                    hub.broadcast(reply)          # an acknowledgement is visible on every console
+                else:
+                    await send(reply)
+
+    async def writer():
+        while True:
+            await send(await q.get())
+
+    try:
+        await asyncio.gather(reader(), writer())
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+    finally:
+        hub.unsubscribe(q)
 
 
 # ---------------------------------------------------------------------------- frontend
@@ -645,6 +709,12 @@ if config.FRONTEND_DIST.exists():
         if full_path.startswith(("api/", "ws/")):
             raise HTTPException(404)
         f = config.FRONTEND_DIST / full_path
+        # the shell files must always be revalidated, or a browser keeps an old index.html pointing at old bundles
+        no_cache = {"Cache-Control": "no-cache"}
         if full_path and f.is_file():
+            if full_path in ("sw.js", "precache.json", "index.html"):
+                return FileResponse(f, headers=no_cache)
+            if full_path.endswith(".webmanifest"):
+                return FileResponse(f, media_type="application/manifest+json")
             return FileResponse(f)
-        return FileResponse(config.FRONTEND_DIST / "index.html")
+        return FileResponse(config.FRONTEND_DIST / "index.html", headers=no_cache)
