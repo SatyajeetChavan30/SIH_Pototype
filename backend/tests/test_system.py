@@ -1,4 +1,4 @@
-"""System tests against the built demo knowledge base (run `python -m nwis.cli build-demo` first).
+"""System tests against the built demo knowledge base (run `python -m stratasense.cli build-demo` first).
 
 They check the claims made in docs/SOLUTION.md: extraction quality on held-out phrasing,
 risk-model skill vs baselines, MW-window recovery of the latent truth, the live alert
@@ -8,20 +8,20 @@ import json
 
 import pytest
 
-from nwis import config
+from stratasense import config
 
 pytestmark = pytest.mark.skipif(not config.DB_PATH.exists(), reason="demo knowledge base not built")
 
 
 @pytest.fixture(scope="module")
 def kb():
-    from nwis.kb import KnowledgeBase
+    from stratasense.kb import KnowledgeBase
     return KnowledgeBase()
 
 
 @pytest.fixture(scope="module")
 def model():
-    from nwis.risk.model import RiskModel
+    from stratasense.risk.model import RiskModel
     return RiskModel.load(config.MODELS_DIR / "risk_model.joblib")
 
 
@@ -51,9 +51,9 @@ def test_risk_model_beats_baselines(kb):
 
 
 def test_mw_window_recovers_latent_tipam_loss_gradient(kb):
-    from nwis.correlation import target_from_well
-    from nwis.data.synth import STRUCT_BY_ID, loss_gradient
-    from nwis.risk.mw_window import mw_window
+    from stratasense.correlation import target_from_well
+    from stratasense.data.synth import STRUCT_BY_ID, loss_gradient
+    from stratasense.risk.mw_window import mw_window
     t = target_from_well(kb, kb.active_id)
     w = mw_window(kb, t, 10.0)["formations"]["TIPAM"]
     truth = loss_gradient("TIPAM", t.lat, t.lon, STRUCT_BY_ID["NDH"], t.spud_year)
@@ -62,8 +62,8 @@ def test_mw_window_recovers_latent_tipam_loss_gradient(kb):
 
 
 def test_lookahead_zones_cover_hidden_active_well_hazards(kb, model):
-    from nwis.correlation import target_from_well
-    from nwis.risk.evidence import risk_profile
+    from stratasense.correlation import target_from_well
+    from stratasense.risk.evidence import risk_profile
     prof = risk_profile(kb, target_from_well(kb, kb.active_id), 8.0, model=model)
     episodes = {e["id"]: e for e in kb.db.kv_get("active_episodes")}
     for ep_id in ("S1", "S3", "S4"):          # offset-predictable hazards
@@ -72,7 +72,7 @@ def test_lookahead_zones_cover_hidden_active_well_hazards(kb, model):
 
 
 def test_live_replay_catches_every_episode(kb, model):
-    from nwis.realtime.engine import LiveSession
+    from stratasense.realtime.engine import LiveSession
     s = LiveSession(kb, model, None)
     opened = []
     while True:
@@ -88,9 +88,14 @@ def test_live_replay_catches_every_episode(kb, model):
 
 def test_api_smoke():
     from fastapi.testclient import TestClient
-    from nwis.api.main import app
+    from stratasense.api.main import app
     with TestClient(app) as c:
-        assert c.get("/api/meta").json()["active_well"]
+        m = c.get("/api/meta").json()
+        assert m["active_well"] and m["boot"]
+        ds = m["datasets"]
+        assert ds["current"] == config.REGION and isinstance(ds["locked"], bool)
+        opts = {o["code"]: o for o in ds["options"]}
+        assert {"assam", "norway"} <= set(opts) and opts[config.REGION]["built"] is True
         assert len(c.get("/api/wells").json()) > 40
         p = c.get("/api/risk/profile").json()
         assert p["bins"] and p["zones"]

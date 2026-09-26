@@ -1,9 +1,9 @@
-# eRTMAC-NWIS — Research Dossier
+# StrataSense — Research Dossier
 
 **SIH Problem Statement 26121 · Oil India Limited · Theme: Smart Automation**
 *Nearby Wells Intelligence System: an AI-powered offset-well knowledge and decision-support platform for drilling operations*
 
-This document covers what exists today, what the literature says works, where current solutions fall short, and how NWIS is designed to close those gaps. Sources are listed at the end, and every numbered reference `[n]` points there.
+This document covers what exists today, what the literature says works, where current solutions fall short, and how StrataSense is designed to close those gaps. Sources are listed at the end, and every numbered reference `[n]` points there.
 
 ---
 
@@ -13,14 +13,14 @@ OIL's **eRTMAC** (enhanced Real-Time Monitoring & Analytics Centre) already stre
 
 ## 2. OIL operating context (why generic tools are not enough)
 
-| Aspect | What the literature says | Design implication for NWIS |
+| Aspect | What the literature says | Design implication for StrataSense |
 |---|---|---|
 | Basin | Upper Assam Shelf and the Assam-Arakan fold-thrust belt (Belt of Schuppen). OIL operates Naharkatiya, Moran, Jorajan, Hapjan, Baghjan, Kathaloni, Tengakhat and others [3][4] | Wells cluster by **structure**. A same-structure offset is worth more than a closer one across a fault. |
 | Stratigraphy | Alluvium → Dhekiajuli → Namsang → Girujan Clay → Tipam Sst → Barail (sand-shale-coal) → Kopili → Sylhet (limestone) → Langpar/Lakadong → basement. Production comes mainly from Tipam and Barail, with newer finds in Langpar/Lakadong [3][4] | Correlate by **formation**, not by measured depth. Tops shift hundreds of metres between structures. |
 | Typical hazards | "Practically all types of problems like high pressure, lost circulation, stuck pipe and hole instability" are met in Upper Assam [5]. Girujan and Tipam hold hydratable, dispersible clays [5] | The ontology must cover losses, kicks and overpressure, stuck pipe (differential, pack-off, mechanical), tight hole and bit balling, instability and cavings, cementing issues, and fishing. |
 | Pressure regime | Shelf formations are near-hydrostatic, with gradients rising slightly in Sylhet and Langpar [6]. In the Schuppen belt, supra-thrust rocks at 700–1400 m carry 9.6–19.5 MPa, and sub-thrust **Barail is overpressured from about 3,700 m (48–54 MPa)** [6] | Location-dependent pressure makes a single MW template unsafe. The system needs **offset-derived, location-specific mud-weight windows**. |
 | Casing and mud practice | The 9⅝″ shoe is set in the Tipam-bottom shale to isolate the differential-sticking-prone layers. Tipam-bottom shale needs about 10.0–10.5 ppg, Barail shale about 10.5–11.0 ppg vertical and 11.2–11.8 ppg as deviation increases [5]. KCl-PHPA-glycol systems are common in the region [7] | Risk must account for **trajectory (inclination)**, and the MW window must be shown against inclination. |
-| Safety culture | The Baghjan-5 blowout (May 2020) burned for more than 5 months. Expert and NGT panels cited a **"mismatch between planning and execution"** and asked why early signs were not acted on [8][9] | NWIS must link the **pre-spud plan** to **live execution** and escalate early signs quickly, with traceable evidence. |
+| Safety culture | The Baghjan-5 blowout (May 2020) burned for more than 5 months. Expert and NGT panels cited a **"mismatch between planning and execution"** and asked why early signs were not acted on [8][9] | StrataSense must link the **pre-spud plan** to **live execution** and escalate early signs quickly, with traceable evidence. |
 
 ## 3. Existing solutions: landscape and gaps
 
@@ -47,20 +47,20 @@ OIL's **eRTMAC** (enhanced Real-Time Monitoring & Analytics Centre) already stre
 
 ## 4. What the literature says works
 
-| Topic | Key findings | How NWIS uses it |
+| Topic | Key findings | How StrataSense uses it |
 |---|---|---|
 | NLP on drilling reports | Sentence classification into **EVENT / SYMPTOM / ACTION** across hundreds of wells [20]. NLP + ML predicts NPT type from D&C reports [21]. Deep-NLP root-cause analysis of NPT (ATCE 2025) [22]. Anomaly detection in daily reports [23]. LLM + few-shot DDR digitisation cut analysis "from months to hours" [19] | A hybrid extractor: domain lexicon, rules and an ML classifier, with **negation and hypothetical handling**, symptom/event/action roles, and span-level citations. An LLM is optional, never required. |
 | Stuck pipe | No single universal leading indicator; multiple indicators reduce false alerts. A real-time T&D/hydraulics-deviation method gave a mean 38-minute warning on 36 incidents [24][25]. A 2026 hybrid physics + AI agent approach [26] | Stuck-pipe **risk index** built from torque trend, overpull, SPP pack-off and ROP change, plus formation look-ahead. |
 | Lost circulation | ML on offset DDR data can predict losses **at the planning stage** [27]. Random Forest and Extra Trees rank best for loss intensity [28]. Explainable probabilistic ML for losses [29] | Offset-evidence risk ribbon, gradient-boosted model, and a **P(loss \| ECD)** curve per formation. |
 | Kick detection | Differential flow is a more sensitive early indicator than pit volume. Trend analysis on calibrated volumes cuts false alarms [30]. ML warns 10–12 minutes earlier than conventional systems [31] | Kick detector on the flow-out delta trend, pit gain and gas, with hysteresis and pump-state gating. |
 | Overpressure | The **corrected d-exponent (dxc)** deviates from its normal-compaction trend when the bit enters overpressure [32][33] | Real-time dxc against a normal-trend line, plus a gas-based overpressure warning. |
-| Well correlation | Dynamic time warping on GR logs correlates wells and picks tops automatically (≥97% alignment reported) [34][35] | Formation-top prediction for the active well, re-anchored as tops are penetrated. DTW re-anchoring is on the roadmap. |
+| Well correlation | Dynamic time warping on GR logs correlates wells and picks tops automatically (≥97% alignment reported) [34][35] | Formation-top prediction for the active well, re-anchored as tops are penetrated, from mud-logger picks and from DTW on gamma ray. DTW is built and runs as an independent QC by default. |
 | Case-based reasoning | DrillEdge showed that matching live data to past cases gives early warnings with known fixes [14][15] | **Analog Replay**: automatic case capture from offset wells, kNN matching, and "what happened next" with mitigation outcomes. |
 | Knowledge graphs + RAG | Graph-structured retrieval reduces LLM hallucination and improves reasoning [36]. The TADI agentic LLM over Volve wellsite data (2026) [37] | Well→Formation→Event→Cause→Mitigation→Outcome graph. Retrieval is grounded, and a citation guard removes uncited LLM text. |
 
-## 5. Gap → NWIS feature matrix
+## 5. Gap → StrataSense feature matrix
 
-| # | Gap | NWIS answer | Status in prototype |
+| # | Gap | StrataSense answer | Status in prototype |
 |---|---|---|---|
 | 1 | Depth-naive offsets | **Formation-aligned look-ahead.** Offset events are projected by relative position within a formation onto the active well's predicted tops (IDW with uncertainty band), then converted TVD → MD with minimum curvature | Built |
 | 2 | No mud-weight context | **Probabilistic offset-derived MW window.** Logistic P(loss \| ECD) and P(kick \| MW) per formation from censored offset evidence. The safe window is shown live against the current MW/ECD | Built |
@@ -71,11 +71,11 @@ OIL's **eRTMAC** (enhanced Real-Time Monitoring & Analytics Centre) already stre
 | 7 | Plan vs. execution | **Pre-spud Offset Hazard Brief** (DWOP pack), and the same risk model drives live alerts | Built |
 | 8 | Alert fatigue | Fusion, de-duplication, hysteresis, escalation when look-ahead and symptoms corroborate each other, and an engineer feedback loop | Built |
 | 9 | Data sovereignty | Runs fully air-gapped with no LLM needed. An optional local LLM (Ollama) runs on-prem | Built |
-| 10 | Integration | WITS-0 parser and WITSML 1.4 drillReport importer (Volve-compatible). eRTMAC data enters through a stream-source adapter | Built (parsers); live eRTMAC connection is the roadmap |
+| 10 | Integration | WITS-0 parser, WITSML 1.4 drillReport importer (Volve-compatible) and WITSML 1.4.1 time-log parser. eRTMAC data enters through a stream-source adapter | Built: WITS-0 TCP and WITSML polling adapters plus a rig simulator. Connecting to OIL's actual eRTMAC endpoint is the pilot step |
 
 ## 6. Why the prototype uses synthetic Assam data
 
-OIL's WCRs and DDRs are proprietary and no dataset is linked to the problem statement. The prototype therefore ships a **deterministic synthetic Upper-Assam dataset** calibrated to the geology and hazards above. It includes latent pore, fracture and collapse fields, and hazard hot-spots such as depletion-driven Tipam losses, Girujan bit balling, Barail coal instability and SE overpressure, and Sylhet fractured-limestone losses. Because the ground truth is known, we can **measure** extraction F1, MW-window recovery and risk-model skill honestly, which is not possible with real, unlabelled data. The same pipeline accepts real data: PDFs through NLP/OCR, and WITSML DDR XML such as the public Equinor Volve dataset [37][38]. A second, real knowledge base built from the Norwegian Offshore Directorate's open FactPages (wells, formation tops, casing, mud, LOT/FIT and wellbore histories) checks the pipeline on genuine records; see [`DATA_SOURCES.md`](DATA_SOURCES.md).
+OIL's WCRs and DDRs are proprietary and no dataset is linked to the problem statement. The prototype therefore ships a **deterministic synthetic Upper-Assam dataset** calibrated to the geology and hazards above. It includes latent pore, fracture and collapse fields, and hazard hot-spots such as depletion-driven Tipam losses, Girujan bit balling, Barail coal instability and SE overpressure, and Sylhet fractured-limestone losses. Because the ground truth is known, we can **measure** extraction F1, MW-window recovery and risk-model skill honestly, which is not possible with real, unlabelled data. The same pipeline accepts real data: PDFs through NLP/OCR, and WITSML DDR XML such as the public Equinor Volve dataset [37][38]. A second, real knowledge base built from the Norwegian Offshore Directorate's open FactPages (wells, formation tops, casing, mud, LOT/FIT and wellbore histories) checks the pipeline on genuine records. Equinor's Volve real-time WITSML logs can replace the synthetic stream there as a real Live Ops replay; the importer is built and tested on Volve-format samples. See [`DATA_SOURCES.md`](DATA_SOURCES.md).
 
 Every synthetic record is labelled **SYNTHETIC** in the UI and documents. Well names are fictitious.
 
@@ -98,7 +98,7 @@ Every synthetic record is labelled **SYNTHETIC** in the UI and documents. Well n
 15. An overview of case-based reasoning applications in drilling engineering. https://www.researchgate.net/publication/257512759 · Rigzone on DrillEdge onshore. https://www.rigzone.com/news/artificial_intelligence_software_aids_decisionmaking_in_onshore_drilling-10-jul-2014-133973-article/
 16. Corva 2023 App Bundle (offset benchmarking, parameter comparison). https://www.corva.ai/blog/corvas-new-2023-app-bundle-maximizes-drilling-efficiency
 17. Exebenus (Spotter ML Stuck Pipe on Kongsberg SiteCom). https://kongsbergdigital.com/partners/partner-solutions/exebenus · https://www.exebenus.com/
-18. OffsetEye (eRTMAC-NWIS, another SIH team). https://github.com/bishopcommander/OffsetEye
+18. OffsetEye (another SIH team). https://github.com/bishopcommander/OffsetEye
 19. Digitization of Daily Drilling Reports Using LLMs, SPE MEOS 2025. https://onepetro.org/SPEMEOS/proceedings-abstract/25MEOS/25MEOS/790010
 20. Sequence Mining and Pattern Analysis in Drilling Reports with Deep NLP, SPE ATCE 2018. https://arxiv.org/pdf/1712.01476
 21. ML and NLP for Automated Analysis of Drilling and Completion Data, SPE-192280-MS. https://onepetro.org/conference-paper/SPE-192280-MS

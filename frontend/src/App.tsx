@@ -2,6 +2,7 @@ import { useState } from "react";
 import { OFFICE, roleLabel, useAuth, type Role } from "./auth";
 import { useApp, type View } from "./context";
 import { useLive } from "./live";
+import DatasetToggle from "./components/DatasetToggle";
 import UploadModal from "./components/UploadModal";
 import { Logo } from "./views/Setup";
 import Analytics from "./views/Analytics";
@@ -43,16 +44,15 @@ export default function App() {
     <header className="topbar">
       <div className="brand">
         <Logo />
-        <span>eRTMAC-NWIS <small>Nearby Wells Intelligence System</small></span>
+        <span>StrataSense <small>Nearby Wells Intelligence System</small></span>
       </div>
       <div className="spacer" />
       <span className={`tag ${live.connected ? "live" : ""}`}><span className="dot" style={{ background: live.connected ? "var(--good-ink)" : "var(--ink-3)" }} />
-        {live.connected ? feedTag : live.offlineSince ? "OFFLINE · showing cached picture" : "stream offline"}</span>
+        {live.connected ? feedTag : live.noStream ? "no real-time stream in this dataset" : live.offlineSince ? "OFFLINE · showing cached picture" : "stream offline"}</span>
       {live.status && <span className="tag num">Bit {Math.round(live.status.md).toLocaleString("en-IN")} m MD · {live.status.formation}</span>}
       <span className="tag">OCR: {meta.ocr.available ? meta.ocr.engine : "not installed"}</span>
       <span className="tag llm">LLM: {meta.llm.backend === "off" ? "off (grounded extractive)" : meta.llm.model}</span>
-      {meta.synthetic ? <span className="tag synthetic" title={meta.ontology.region?.data_notice ?? "All data in this demo is synthetic"}>SYNTHETIC DEMO DATA</span>
-        : <span className="tag live" title={meta.ontology.region?.data_notice}>REAL PUBLIC DATA · Sodir (NLOD)</span>}
+      <DatasetToggle />
       {can(...OFFICE) && <button className="btn sm upload" onClick={() => setUploadOpen(true)} title="Upload a DDR/WCR PDF or WITSML XML">⇪ <span>Upload report</span></button>}
       {user && <span className="tag user" title={`Signed in as ${user.username}`}><b>{user.display_name}</b> <span className="muted">{roleLabel(user.role)}</span>
         <button className="linkbtn" onClick={logout}>Sign out</button></span>}

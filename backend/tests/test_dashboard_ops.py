@@ -10,9 +10,9 @@ from pathlib import Path
 
 import pytest
 
-from nwis import auth, config, ops
-from nwis.db import DB
-from nwis.jobs import JobCancelled, JobManager
+from stratasense import auth, config, ops
+from stratasense.db import DB
+from stratasense.jobs import JobCancelled, JobManager
 
 
 # ---------------------------------------------------------------------------------------------- units
@@ -21,9 +21,9 @@ def test_settings_file_round_trip_and_env_lock(tmp_path, monkeypatch):
     config.save_settings({"top_pick_mode": "dtw"})
     config.save_settings({"llm_backend": "ollama"})
     assert config.read_settings() == {"top_pick_mode": "dtw", "llm_backend": "ollama"}
-    monkeypatch.setenv("NWIS_TOP_PICK", "mudlogger")
+    monkeypatch.setenv("STRATASENSE_TOP_PICK", "mudlogger")
     assert "top_pick_mode" in config.locked()      # an environment variable wins and is shown as locked
-    monkeypatch.delenv("NWIS_TOP_PICK")
+    monkeypatch.delenv("STRATASENSE_TOP_PICK")
     assert "top_pick_mode" not in config.locked()
 
 
@@ -78,13 +78,13 @@ def test_staged_rebuild_is_promoted_with_accounts_log_and_paths(tmp_path):
     st = ops.staging_of(final)
     final.mkdir()
     st.mkdir()
-    _mini_db(final / "nwis.db", str(final / "documents" / "a.pdf"), ["alice"], log_rows=3)
-    _mini_db(st / "nwis.db", str(st / "documents" / "a.pdf"), [])
+    _mini_db(final / "stratasense.db", str(final / "documents" / "a.pdf"), ["alice"], log_rows=3)
+    _mini_db(st / "stratasense.db", str(st / "documents" / "a.pdf"), [])
     assert not ops.promote_staged(final)                  # no BUILD_OK marker: an unfinished build is never used
     (st / ops.BUILD_OK).write_text("x")
     assert ops.promote_staged(final, log=lambda *_: None)
     assert not st.exists() and not final.with_name("data.old").exists()
-    con = sqlite3.connect(final / "nwis.db")
+    con = sqlite3.connect(final / "stratasense.db")
     assert con.execute("SELECT path FROM documents").fetchone()[0] == str(final / "documents" / "a.pdf")
     assert [r[0] for r in con.execute("SELECT username FROM users")] == ["alice"]
     assert con.execute("SELECT COUNT(*) FROM decision_log").fetchone()[0] == 3
@@ -93,7 +93,7 @@ def test_staged_rebuild_is_promoted_with_accounts_log_and_paths(tmp_path):
 
 
 def test_zip_uploads_are_flattened_and_filtered(tmp_path):
-    from nwis.api.main import _save_uploads
+    from stratasense.api.main import _save_uploads
 
     class Up:
         def __init__(self, name, data):
@@ -123,9 +123,9 @@ def test_access_policy_for_operations():
 
 def test_first_run_server_offers_setup_instead_of_failing(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
-    import nwis.api.main as main
+    import stratasense.api.main as main
     empty = tmp_path / "data"
-    for name, sub in (("DATA_DIR", None), ("DB_PATH", "nwis.db"), ("LOGS_DIR", "logs"), ("MODELS_DIR", "models"),
+    for name, sub in (("DATA_DIR", None), ("DB_PATH", "stratasense.db"), ("LOGS_DIR", "logs"), ("MODELS_DIR", "models"),
                       ("UPLOADS_DIR", "uploads")):
         monkeypatch.setattr(config, name, empty / sub if sub else empty)
     monkeypatch.setattr(main, "S", main.State())
@@ -145,11 +145,11 @@ built = pytest.mark.skipif(not config.DB_PATH.exists() or not (config.LOGS_DIR /
 @pytest.fixture(scope="module")
 def client(tmp_path_factory):
     from fastapi.testclient import TestClient
-    import nwis.api.main as main
-    dst = tmp_path_factory.mktemp("nwis") / "data"
+    import stratasense.api.main as main
+    dst = tmp_path_factory.mktemp("stratasense") / "data"
     shutil.copytree(config.DATA_DIR, dst, ignore=shutil.ignore_patterns("documents", "eval", "uploads"))
     mp = pytest.MonkeyPatch()
-    for name, sub in (("DATA_DIR", None), ("DB_PATH", "nwis.db"), ("LOGS_DIR", "logs"), ("MODELS_DIR", "models"),
+    for name, sub in (("DATA_DIR", None), ("DB_PATH", "stratasense.db"), ("LOGS_DIR", "logs"), ("MODELS_DIR", "models"),
                       ("UPLOADS_DIR", "uploads")):
         mp.setattr(config, name, dst / sub if sub else dst)
     mp.setattr(config, "STREAM", "replay")
@@ -184,7 +184,7 @@ def test_settings_apply_immediately(client):
     assert r.status_code == 200 and config.TOP_PICK_MODE == "dtw" and config.STREAM_GAP_S == 120
     assert client.get("/api/meta").json()["top_pick_mode"] == "dtw"
     assert client.post("/api/admin/settings", json={"top_pick_mode": "guess"}).status_code == 400
-    assert client.post("/api/admin/settings", json={"auth": False}).status_code == 409   # NWIS_AUTH is set by the tests
+    assert client.post("/api/admin/settings", json={"auth": False}).status_code == 409   # STRATASENSE_AUTH is set by the tests
     client.post("/api/admin/settings", json={"top_pick_mode": "auto", "stream_gap_s": 300})
 
 
@@ -229,7 +229,7 @@ def test_bulk_import_of_a_zip_runs_as_a_job(client):
 
 @built
 def test_maintenance_jobs_list_refuse_when_unavailable_and_retrain_in_place(client):
-    import nwis.api.main as main
+    import stratasense.api.main as main
     kinds = {k["key"]: k for k in client.get("/api/analytics/maintenance").json()}
     assert set(kinds) == {"evaluate-ocr", "retrain-risk", "retrain-classifier"} and kinds["retrain-risk"]["available"]
     assert client.post("/api/analytics/maintenance/rebuild-everything").status_code == 404

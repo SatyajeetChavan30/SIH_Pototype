@@ -8,7 +8,7 @@ import shutil
 
 import pytest
 
-from nwis import config
+from stratasense import config
 
 pytestmark = pytest.mark.skipif(not config.DB_PATH.exists(), reason="demo knowledge base not built")
 
@@ -16,7 +16,7 @@ pytestmark = pytest.mark.skipif(not config.DB_PATH.exists(), reason="demo knowle
 @pytest.fixture(scope="module")
 def data_copy(tmp_path_factory):
     src = config.DATA_DIR
-    dst = tmp_path_factory.mktemp("nwis") / "data"
+    dst = tmp_path_factory.mktemp("stratasense") / "data"
     shutil.copytree(src, dst, ignore=shutil.ignore_patterns("documents", "eval", "uploads"))
     return dst
 
@@ -24,9 +24,9 @@ def data_copy(tmp_path_factory):
 @pytest.fixture(scope="module")
 def client(data_copy):
     from fastapi.testclient import TestClient
-    import nwis.api.main as main
+    import stratasense.api.main as main
     mp = pytest.MonkeyPatch()
-    for name, sub in (("DATA_DIR", None), ("DB_PATH", "nwis.db"), ("LOGS_DIR", "logs"), ("MODELS_DIR", "models"),
+    for name, sub in (("DATA_DIR", None), ("DB_PATH", "stratasense.db"), ("LOGS_DIR", "logs"), ("MODELS_DIR", "models"),
                       ("UPLOADS_DIR", "uploads")):
         mp.setattr(config, name, data_copy / sub if sub else data_copy)
     mp.setattr(main, "S", main.State())
@@ -37,18 +37,18 @@ def client(data_copy):
 
 @pytest.fixture(scope="module")
 def kb():
-    from nwis.kb import KnowledgeBase
+    from stratasense.kb import KnowledgeBase
     return KnowledgeBase()
 
 
 @pytest.fixture(scope="module")
 def model():
-    from nwis.risk.model import RiskModel
+    from stratasense.risk.model import RiskModel
     return RiskModel.load(config.MODELS_DIR / "risk_model.joblib")
 
 
 def test_alarm_budget_keeps_every_detection_and_cuts_nuisance_alarms(kb, model):
-    from nwis.realtime.evaluate import replay
+    from stratasense.realtime.evaluate import replay
     ungated = replay(kb, model, None, nuisance=1.0)
     gated = replay(kb, model, 1.0, nuisance=1.0)
     assert gated["detected"] == len(gated["episodes"]) == ungated["detected"]
@@ -58,7 +58,7 @@ def test_alarm_budget_keeps_every_detection_and_cuts_nuisance_alarms(kb, model):
 
 
 def test_dtw_top_picks_and_detection_without_mudlogger(kb, model):
-    from nwis.realtime.evaluate import top_pick_eval
+    from stratasense.realtime.evaluate import top_pick_eval
     r = top_pick_eval(kb, model)["dtw"]
     assert r["n"] >= 3
     errs = sorted(abs(v) for v in r["per_formation"].values())

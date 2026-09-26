@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 
-/** A background job on the server (build, import, evaluation, install); see backend nwis/jobs.py. */
+/** A background job on the server (build, import, evaluation, install); see backend stratasense/jobs.py. */
 export interface Job {
   id: string; kind: string; title: string; status: "running" | "done" | "failed" | "cancelled";
   started: number; finished: number | null; elapsed_s: number; progress: number | null; stage: string | null;

@@ -2,27 +2,33 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "nwis",
+      "name": "stratasense",
       "runtimeExecutable": ".venv\\Scripts\\python",
-      "runtimeArgs": ["-m", "nwis.cli", "serve", "--host", "127.0.0.1", "--port", "8765"],
+      "runtimeArgs": ["-m", "stratasense.cli", "serve", "--host", "127.0.0.1", "--port", "8765"],
       "port": 8765
     },
     {
-      "name": "nwis-live",
+      "name": "stratasense-app",
+      "runtimeExecutable": ".venv\\Scripts\\python",
+      "runtimeArgs": ["-m", "stratasense.cli", "serve", "--host", "127.0.0.1", "--port", "8770"],
+      "port": 8770
+    },
+    {
+      "name": "stratasense-live",
       "runtimeExecutable": "cmd",
-      "runtimeArgs": ["/c", "set NWIS_STREAM=wits0-listen:5501&& set NWIS_STREAM_GAP_S=60&& set NWIS_DATA_DIR=C:\\Users\\satya\\AppData\\Local\\Temp\\claude\\D--pd-chosen-one-SIH-2\\b4a3c581-0fd5-4f5b-831a-c5d2421dd88b\\scratchpad\\nwis_demo&& .venv\\Scripts\\python -m nwis.cli serve --host 127.0.0.1 --port 8766"],
+      "runtimeArgs": ["/c", "set STRATASENSE_STREAM=wits0-listen:5501&& set STRATASENSE_STREAM_GAP_S=60&& set STRATASENSE_DATA_DIR=C:\\Users\\satya\\AppData\\Local\\Temp\\claude\\D--pd-chosen-one-SIH-2\\b4a3c581-0fd5-4f5b-831a-c5d2421dd88b\\scratchpad\\stratasense_demo&& .venv\\Scripts\\python -m stratasense.cli serve --host 127.0.0.1 --port 8766"],
       "port": 8766
     },
     {
-      "name": "nwis-noauth",
+      "name": "stratasense-noauth",
       "runtimeExecutable": "cmd",
-      "runtimeArgs": ["/c", "set NWIS_AUTH=off&& .venv\\Scripts\\python -m nwis.cli serve --host 127.0.0.1 --port 8768"],
+      "runtimeArgs": ["/c", "set STRATASENSE_AUTH=off&& .venv\\Scripts\\python -m stratasense.cli serve --host 127.0.0.1 --port 8768"],
       "port": 8768
     },
     {
-      "name": "nwis-norway",
+      "name": "stratasense-norway",
       "runtimeExecutable": "cmd",
-      "runtimeArgs": ["/c", "set NWIS_REGION=norway&& set NWIS_DATA_DIR=data_norway&& .venv\\Scripts\\python -m nwis.cli serve --host 127.0.0.1 --port 8767"],
+      "runtimeArgs": ["/c", "set STRATASENSE_REGION=norway&& set STRATASENSE_DATA_DIR=data_norway&& .venv\\Scripts\\python -m stratasense.cli serve --host 127.0.0.1 --port 8767"],
       "port": 8767
     }
   ]

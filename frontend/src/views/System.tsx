@@ -7,7 +7,8 @@ import { useLive } from "../live";
 import { fmt } from "../theme";
 
 interface Dataset { code: string; label: string; about: string; built: boolean; current: boolean; synthetic: boolean; path: string;
-  staged: boolean; needs?: string | null; build_info: any }
+  staged: boolean; needs?: string | null; build_info: any; stream?: boolean;
+  stream_source?: { wellbore: string; incidents?: number; window: { start: string; hours: number; md_from: number; md_to: number } } | null }
 interface StreamInfo { spec: string; live: boolean; describe: string; in_gap: boolean; samples: number; bit_md: number | null; listen_port: number | null;
   stats: { connected: boolean; peer: string | null; packets: number; errors: number; reconnects: number; last_packet_age_s: number | null; last_error: string | null } | null }
 interface SimInfo { available: boolean; running: boolean; frames: number; total: number; bit_md: number | null; speed: number; target: string | null; error: string | null }
@@ -19,9 +20,9 @@ interface AdminStatus {
   supervised: boolean; boot: string; jobs: Job[]; build: any; settings_file: string;
 }
 
-const ENV_NAME: Record<string, string> = { dataset: "NWIS_REGION / NWIS_DATA_DIR", stream: "NWIS_STREAM", stream_gap_s: "NWIS_STREAM_GAP_S",
-  top_pick_mode: "NWIS_TOP_PICK", llm_backend: "NWIS_LLM", ollama_url: "OLLAMA_URL", ollama_model: "OLLAMA_MODEL", auth: "NWIS_AUTH",
-  tile_url: "NWIS_TILE_URL", tile_attribution: "NWIS_TILE_ATTRIBUTION", asr_model: "NWIS_ASR_MODEL" };
+const ENV_NAME: Record<string, string> = { dataset: "STRATASENSE_REGION / STRATASENSE_DATA_DIR", stream: "STRATASENSE_STREAM", stream_gap_s: "STRATASENSE_STREAM_GAP_S",
+  top_pick_mode: "STRATASENSE_TOP_PICK", llm_backend: "STRATASENSE_LLM", ollama_url: "OLLAMA_URL", ollama_model: "OLLAMA_MODEL", auth: "STRATASENSE_AUTH",
+  tile_url: "STRATASENSE_TILE_URL", tile_attribution: "STRATASENSE_TILE_ATTRIBUTION", asr_model: "STRATASENSE_ASR_MODEL" };
 
 const post = (path: string, body?: unknown) => api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body ?? {}) });
 
@@ -39,7 +40,7 @@ export default function System() {
   const restart = (why: string, boot: string) => { setRestarting({ why, s: 0 }); reloadAfterRestart(boot, (s) => setRestarting({ why, s })); };
 
   if (restarting) return <div className="card" style={{ maxWidth: 640 }}>
-    <h3>Restarting NWIS</h3>
+    <h3>Restarting StrataSense</h3>
     <div>{restarting.why} <span className="muted num">{fmtDuration(restarting.s)}</span></div>
     <div className="progress" style={{ marginTop: 10 }}><div className="indeterminate" style={{ width: "100%" }} /></div>
     <div className="small muted" style={{ marginTop: 8 }}>The page reloads by itself when the server is back.</div>
@@ -121,7 +122,7 @@ function DatasetCard({ st, locked, busy, reload, restart }: { st: AdminStatus; l
     else if (j.status === "done") setMsg({ ok: true, text: j.stage ?? "Built." });
   };
   const switchTo = async (code: string) => {
-    if (!confirm(`Switch NWIS to "${st.datasets[code].label}"? The server restarts (about 10–30 s); everyone's pages reload.`)) return;
+    if (!confirm(`Switch StrataSense to "${st.datasets[code].label}"? The server restarts (about 10–30 s); everyone's pages reload.`)) return;
     try { const r: any = await post("/api/admin/dataset", { dataset: code }); if (r.restart) restart(`Switching to ${st.datasets[code].label}…`, st.boot); }
     catch (e: any) { setMsg({ ok: false, text: e.message }); }
   };
@@ -147,6 +148,7 @@ function DatasetCard({ st, locked, busy, reload, restart }: { st: AdminStatus; l
           {!d.current && d.built && <button className="btn sm" disabled={!!busy || locked || !!d.needs} onClick={() => build(d.code, { quadrants, download: false, switch: false })}>Rebuild</button>}
         </div>
       </div>
+      {d.code === "norway" && d.built && <VolveStream d={d} busy={busy} restart={restart} boot={st.boot} reload={reload} />}
       {d.code === "norway" && !d.built && !d.needs && <div className="col" style={{ gap: 6, marginTop: 8 }}>
         <div className="row wrap small" style={{ gap: 10 }}>
           <label className="row" style={{ gap: 6 }}>Quadrants <input type="text" value={quadrants} onChange={(e) => setQuadrants(e.target.value)} style={{ width: 90 }} title="Norwegian quadrants, e.g. 15,16 (Sleipner / Volve area); 'all' for the whole shelf" /></label>
@@ -162,6 +164,82 @@ function DatasetCard({ st, locked, busy, reload, restart }: { st: AdminStatus; l
     {followId && <Tracked id={followId} onEnd={onEnd} />}
     <Msg m={msg} />
     <div className="small muted">A rebuild runs next to the knowledge base in use and is swapped in only when it has finished cleanly.</div>
+  </div>;
+}
+
+interface VolveWell { wellbore: string; drilling_logs: number; files: number; log_days: number; trajectory: boolean; incidents: number }
+
+/** Real rig data for the North Sea Live Ops: Equinor's Volve WITSML real-time logs (+ daily drilling reports). */
+function VolveStream({ d, busy, restart, boot, reload }: { d: Dataset; busy?: Job; restart: (why: string, boot: string) => void; boot: string; reload: () => void }) {
+  const [folder, setFolder] = useState("");
+  const [ddr, setDdr] = useState("");
+  const [hours, setHours] = useState(12);
+  const [wells, setWells] = useState<VolveWell[] | null>(null);
+  const [wellbore, setWellbore] = useState("");
+  const [scanId, setScanId] = useState<string | null>(null);
+  const [importId, setImportId] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const src = d.stream_source;
+  const body = () => ({ folder: folder.trim(), ddr_folder: ddr.trim() || undefined });
+
+  const scan = async () => {
+    setMsg(null); setWells(null);
+    try { setScanId((await startJob("/api/admin/volve/scan", body())).id); } catch (e: any) { setMsg({ ok: false, text: e.message }); }
+  };
+  const onScanned = (j: Job) => {
+    if (j.status !== "done") return;
+    const rows: VolveWell[] = j.result?.wellbores ?? [];
+    setWells(rows);
+    setWellbore((rows.find((r) => r.incidents > 0) ?? rows[0])?.wellbore ?? "");
+    if (!rows.length) setMsg({ ok: false, text: "No time-indexed drilling logs in that folder. Pick the 'WITSML Realtime drilling data' folder or a wellbore folder inside it." });
+  };
+  const run = async () => {
+    setMsg(null);
+    try { setImportId((await startJob("/api/admin/volve/import", { ...body(), wellbore: wellbore || undefined, hours })).id); reload(); }
+    catch (e: any) { setMsg({ ok: false, text: e.message }); }
+  };
+  const onImported = (j: Job) => {
+    reload();
+    if (j.status === "done" && j.result?.restart) restart("Loading the Volve rig stream…", boot);
+    else if (j.status === "done") setMsg({ ok: true, text: "Imported. It is used when the North Sea dataset is switched on." });
+  };
+  const upload = async (f: File | undefined, set: (p: string) => void) => {
+    if (!f) return;
+    setUploading(true); setMsg(null);
+    try {
+      const fd = new FormData(); fd.append("file", f, f.name);
+      set((await api<{ folder: string }>("/api/admin/volve/upload", { method: "POST", body: fd })).folder);
+    } catch (e: any) { setMsg({ ok: false, text: e.message }); } finally { setUploading(false); }
+  };
+
+  return <div className="col" style={{ gap: 6, marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--line)" }}>
+    <div style={{ fontWeight: 650 }}>Real rig stream for Live Ops: Equinor Volve</div>
+    <div className="small ink2">{src ? <>In use: <b>{src.wellbore}</b>, {src.window.start.slice(0, 16).replace("T", " ")} UTC, {src.window.hours} h, bit {Math.round(src.window.md_from)}–{Math.round(src.window.md_to)} m MD
+      {src.incidents ? ` · ${src.incidents} real incident${src.incidents > 1 ? "s" : ""} from the drilling reports` : " · no coded incidents"}</>
+      : "None yet: Live Ops has no stream in this dataset."}</div>
+    <div className="small muted">Download from <a href="https://www.equinor.com/energy/volve-data-sharing" target="_blank" rel="noreferrer">Equinor's Volve data sharing</a> (Databricks Marketplace, free account):
+      the <b>WITSML Realtime drilling data</b> folder, and for real incidents the daily drilling reports (XML) from <b>Well_technical_data</b>. Equinor Open Data Licence: attribution required, no sale of the data.</div>
+    <label className="small col" style={{ gap: 2 }}>WITSML real-time folder on this server
+      <input type="text" value={folder} onChange={(e) => setFolder(e.target.value)} placeholder="D:\Volve\WITSML Realtime drilling data" /></label>
+    <label className="small">or upload a .zip of it <input type="file" accept=".zip" disabled={uploading} onChange={(e) => upload(e.target.files?.[0], setFolder)} /></label>
+    <label className="small col" style={{ gap: 2 }}>Daily drilling reports folder (optional, for real incidents)
+      <input type="text" value={ddr} onChange={(e) => setDdr(e.target.value)} placeholder="D:\Volve\Well_technical_data" /></label>
+    <label className="small">or upload a .zip of the reports <input type="file" accept=".zip" disabled={uploading} onChange={(e) => upload(e.target.files?.[0], setDdr)} /></label>
+    {uploading && <div className="small muted">Uploading and unpacking…</div>}
+    <div className="row wrap small" style={{ gap: 8 }}>
+      <button className="btn sm" disabled={!folder.trim() || !!busy} onClick={scan}>Scan folder</button>
+      {wells && wells.length > 0 && <label className="row" style={{ gap: 4 }}>Wellbore
+        <select value={wellbore} onChange={(e) => setWellbore(e.target.value)}>
+          {wells.map((w) => <option key={w.wellbore} value={w.wellbore}>{w.wellbore} · {w.files} log files · {w.log_days} log-days{w.incidents ? ` · ${w.incidents} incidents` : ""}{w.trajectory ? "" : " · no survey"}</option>)}
+        </select></label>}
+      <label className="row" style={{ gap: 4 }}>Replay <select value={hours} onChange={(e) => setHours(Number(e.target.value))}>
+        {[6, 12, 24].map((h) => <option key={h} value={h}>{h} h</option>)}</select></label>
+      <button className="btn sm primary" disabled={!folder.trim() || !!busy} onClick={run}>Import Volve stream</button>
+    </div>
+    {scanId && <Tracked id={scanId} onEnd={onScanned} />}
+    {importId && <Tracked id={importId} onEnd={onImported} />}
+    <Msg m={msg} />
   </div>;
 }
 
@@ -226,14 +304,14 @@ function FeedCard({ st, locked, reload }: { st: AdminStatus; locked: Set<string>
       setMode("live");
       reload();
       setF(parseSpec((await api<AdminStatus>("/api/admin/status")).stream.spec));
-      setMsg({ ok: true, text: "Simulated rig is transmitting. Open Live Ops → ● Live rig feed to watch NWIS read it." });
+      setMsg({ ok: true, text: "Simulated rig is transmitting. Open Live Ops → ● Live rig feed to watch StrataSense read it." });
     } catch (e: any) { setMsg({ ok: false, text: e.message }); } finally { setBusy(false); }
   };
   const stopSim = async () => { await post("/api/admin/simulator/stop"); reload(); };
   const set = (k: string, v: string) => setF({ ...f, [k]: v });
 
   return <div className="card col" style={{ gap: 10 }}>
-    <h3>Live rig feed <span className="sub">how eRTMAC data reaches NWIS</span> <Lock k="stream" locked={lockedFeed} /></h3>
+    <h3>Live rig feed <span className="sub">how eRTMAC data reaches StrataSense</span> <Lock k="stream" locked={lockedFeed} /></h3>
     <div className="row wrap small" style={{ gap: 12 }}>
       <span><b>Now:</b> {s.describe}</span>
       {s.live && stats && <>
@@ -253,10 +331,10 @@ function FeedCard({ st, locked, reload }: { st: AdminStatus; locked: Set<string>
       {f.kind === "replay" && <span className="muted">Each browser replays the stored eRTMAC stream of the active well privately (demo mode).</span>}
       {f.kind === "wits0-listen" && <label className="row" style={{ gap: 6 }}>Listen on TCP port <input type="number" value={f.port} onChange={(e) => set("port", e.target.value)} style={{ width: 90 }} />
         <span className="muted">point the rig's WITS-0 box / eRTMAC relay at this server</span></label>}
-      {f.kind === "wits0-connect" && <><span className="muted">NWIS connects to a WITS-0 TCP server (serial-over-IP box).</span><label className="row" style={{ gap: 6 }}>Host <input type="text" value={f.host} placeholder="10.0.0.5" onChange={(e) => set("host", e.target.value)} style={{ width: 150 }} /></label>
+      {f.kind === "wits0-connect" && <><span className="muted">StrataSense connects to a WITS-0 TCP server (serial-over-IP box).</span><label className="row" style={{ gap: 6 }}>Host <input type="text" value={f.host} placeholder="10.0.0.5" onChange={(e) => set("host", e.target.value)} style={{ width: 150 }} /></label>
         <label className="row" style={{ gap: 6 }}>Port <input type="number" value={f.cport} onChange={(e) => set("cport", e.target.value)} style={{ width: 90 }} /></label></>}
       {f.kind === "witsml" && <div className="col" style={{ gap: 6, width: "100%" }}>
-        <span className="muted">NWIS polls a WITSML 1.4.1 store for new log rows.</span>
+        <span className="muted">StrataSense polls a WITSML 1.4.1 store for new log rows.</span>
         <input type="text" value={f.url} placeholder="https://witsml-store/Store/WMLS.asmx" onChange={(e) => set("url", e.target.value)} />
         <div className="row wrap" style={{ gap: 6 }}>
           {(["well", "wellbore", "log"] as const).map((k) => <input key={k} type="text" value={f[k]} placeholder={`${k} uid`} onChange={(e) => set(k, e.target.value)} style={{ width: 130 }} />)}
@@ -289,7 +367,7 @@ function FeedCard({ st, locked, reload }: { st: AdminStatus; locked: Set<string>
           {sim.running ? "Transmitting" : "Stopped"} · {fmt.n0(sim.frames)} / {fmt.n0(sim.total)} frames{sim.bit_md != null ? ` · bit ${fmt.n0(sim.bit_md)} m` : ""} · {sim.speed}× → {sim.target}
           <div className="progress" style={{ marginTop: 4 }}><div style={{ width: `${sim.total ? (sim.frames / sim.total) * 100 : 0}%` }} /></div></div>}
         {sim.error && <div className="small" style={{ color: "var(--bad-ink)" }}>{sim.error}</div>}
-        <div className="small muted" style={{ marginTop: 6 }}>Only what a rig WITS box sends goes over the wire; NWIS infers rig state, computes the d-exponent and picks tops from gamma ray itself.
+        <div className="small muted" style={{ marginTop: 6 }}>Only what a rig WITS box sends goes over the wire; StrataSense infers rig state, computes the d-exponent and picks tops from gamma ray itself.
           {s.spec.startsWith("wits0-listen") ? "" : " Starting it switches the feed to a WITS-0 listener on port 5501."}</div>
       </>}
     </div>
@@ -442,13 +520,13 @@ function ServerCard({ st, busy, restart }: { st: AdminStatus; busy?: Job; restar
   const [sel, setSel] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const doRestart = async () => {
-    if (!confirm("Restart the NWIS server now? Live consoles reconnect by themselves.")) return;
+    if (!confirm("Restart the StrataSense server now? Live consoles reconnect by themselves.")) return;
     try { await post("/api/admin/restart"); restart("Restarting the server…", st.boot); } catch (e: any) { setMsg({ ok: false, text: e.message }); }
   };
   return <div className="card col" style={{ gap: 8 }}>
     <h3>Server &amp; background jobs</h3>
     <div className="small ink2">Knowledge base folder: <code>{st.data_dir}</code><br />
-      {st.supervised ? "Running under the NWIS launcher: restarts are handled automatically." : "Started without the launcher: a restart re-launches the same process."}</div>
+      {st.supervised ? "Running under the StrataSense launcher: restarts are handled automatically." : "Started without the launcher: a restart re-launches the same process."}</div>
     <div className="row" style={{ gap: 8 }}><button className="btn sm" disabled={!!busy} onClick={doRestart}>Restart server</button><Msg m={msg} /></div>
     {st.jobs.length === 0 ? <div className="small muted">No background jobs since the server started.</div> :
       <table className="t"><thead><tr><th>Job</th><th>Status</th><th className="num">Took</th></tr></thead>

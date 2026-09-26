@@ -46,7 +46,7 @@ export default function Knowledge() {
     </div>
     <div className="seg" style={{ alignSelf: "flex-start" }}>
       <button className={tab === "search" ? "on" : ""} onClick={() => setTab("search")}>Search</button>
-      <button className={tab === "ask" ? "on" : ""} onClick={() => setTab("ask")}>Ask NWIS</button>
+      <button className={tab === "ask" ? "on" : ""} onClick={() => setTab("ask")}>Ask StrataSense</button>
       <button className={tab === "graph" ? "on" : ""} onClick={() => setTab("graph")}>Knowledge graph</button>
       <button className={tab === "browse" ? "on" : ""} onClick={() => setTab("browse")}>Browse all</button>
       {memoHere && <button className={tab === "memo" ? "on" : ""} onClick={() => setTab("memo")}>Share know-how</button>}
@@ -58,7 +58,7 @@ export default function Knowledge() {
     {tab === "memo" && memoHere && <>
       <MemoCard onResult={setMemoRes} />
       {memoRes && <div className="card small">Thanks. {Array.isArray(memoRes.review) ? memoRes.review.length : 0} item(s) from your memo went to the office review
-        queue. Once approved they appear in search, Ask NWIS and live recommendations, credited to you.</div>}
+        queue. Once approved they appear in search, Ask StrataSense and live recommendations, credited to you.</div>}
     </>}
   </div>;
 }
@@ -68,7 +68,7 @@ const csvCell = (v: unknown) => {
   return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
 };
 
-/** Every matching record (not only the 30 on screen) as a CSV, with its source page, for use outside NWIS. */
+/** Every matching record (not only the 30 on screen) as a CSV, with its source page, for use outside StrataSense. */
 async function exportCsv(q: string, types: string[], total: number, fmName: (c: string) => string) {
   const r = await api(`/api/search?${qs({ q, types: types.join(","), limit: Math.min(total, 500) })}`);
   const head = ["type", "well", "formation", "md_m", "hazards", "text", "source", "page"];
@@ -79,7 +79,7 @@ async function exportCsv(q: string, types: string[], total: number, fmName: (c: 
   const url = URL.createObjectURL(new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" }));   // BOM: Excel reads UTF-8
   const a = document.createElement("a");
   a.href = url;
-  a.download = `nwis-knowledge-${q.trim().replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").slice(0, 60) || "search"}.csv`;
+  a.download = `stratasense-knowledge-${q.trim().replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").slice(0, 60) || "search"}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -167,7 +167,7 @@ function AarModal({ eventId, onClose }: { eventId: string; onClose: () => void }
     <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} disabled={done}
       style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--line-strong)", borderRadius: 8, padding: 8 }} />
     <div className="row" style={{ marginTop: 6 }}>
-      {done ? <span className="small" style={{ color: "var(--good-ink)" }}>✔ Approved: this lesson now appears in search, Ask NWIS, hazard briefs and live recommendations.</span>
+      {done ? <span className="small" style={{ color: "var(--good-ink)" }}>✔ Approved: this lesson now appears in search, Ask StrataSense, hazard briefs and live recommendations.</span>
         : can(...OFFICE) ? <button className="btn sm primary" disabled={text.trim().length < 20} onClick={approve}>Approve as {getActor()} and publish lesson</button>
           : <span className="small muted">An office engineer approves after-action reviews into lessons.</span>}
       {err && <span className="small" style={{ color: "var(--bad-ink)" }}>{err}</span>}

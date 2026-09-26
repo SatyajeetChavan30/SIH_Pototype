@@ -48,9 +48,10 @@ def parse_drill_reports(xml_bytes: bytes) -> list[dict]:
             if md is not None and uom.lower() in ("ft", "ft_us"):
                 md *= 0.3048
             acts.append({"start": (_t(a, "dTimStart") or "")[11:16], "end": (_t(a, "dTimEnd") or "")[11:16],
+                         "t_start": _t(a, "dTimStart"), "t_end": _t(a, "dTimEnd"),
                          "md": md, "code": _t(a, "proprietaryCode") or "", "state": _t(a, "state") or "",
                          "comments": _t(a, "comments") or ""})
-        out.append({"well": well, "date": date, "mw_ppg": mw_ppg, "md": _t(r, "statusInfo/md"),
+        out.append({"well": well, "wellbore": _t(r, "nameWellbore"), "date": date, "mw_ppg": mw_ppg, "md": _t(r, "statusInfo/md"),
                     "summary": _t(r, "statusInfo/sum24Hr"), "activities": acts})
     return out
 

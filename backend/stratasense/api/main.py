@@ -278,7 +278,17 @@ def meta():
               "map_tiles": {"url": config.TILE_URL, "attribution": config.TILE_ATTRIBUTION},
               "stream": {"live_available": S.hub is not None, "spec": config.STREAM,
                          "describe": S.hub.source.describe() if S.hub else "stored replay"},
-              "formation_order": FORMATION_ORDER, "ribbon_hazards": RIBBON_HAZARDS})
+              "formation_order": FORMATION_ORDER, "ribbon_hazards": RIBBON_HAZARDS,
+              "boot": ops.BOOT_ID, "datasets": _dataset_choice(), "stream_source": S.db.kv_get("stream_source")})
+
+
+def _dataset_choice() -> dict:
+    """What the header dataset toggle needs; a file-existence check only, no other knowledge base is opened."""
+    return {"current": config.REGION, "locked": "dataset" in config.locked(),
+            "options": [{"code": c, "label": d["label"], "synthetic": d["synthetic"],
+                         "built": (ops.data_dir(c) / config.DB_NAME).exists(),
+                         "stream": (ops.data_dir(c) / "logs" / "active_stream.npz").exists()}
+                        for c, d in ops.DATASETS.items()]}
 
 
 # ---------------------------------------------------------------------------- wells & map
@@ -793,11 +803,12 @@ async def live(ws: WebSocket):
         await _live_feed(ws, S.hub)
         return
     if not (config.LOGS_DIR / "active_stream.npz").exists() or S.kb.active is None:
-        # e.g. the real public-data region: there is no public real-time stream to replay
+        # e.g. the North Sea dataset before a Volve rig stream has been imported (import-volve-stream)
         await ws.send_json({"type": "error", "code": "no_stream",
-                            "message": "No real-time stream in this dataset. An administrator can connect a WITS-0 / "
-                                       "WITSML rig feed under System → Live rig feed, or switch to the Assam demo "
-                                       "for the replay."})
+                            "message": "No real-time stream in this dataset yet. An administrator can import Equinor's "
+                                       "real Volve rig logs (import-volve-stream, see docs/DATA_SOURCES.md), connect a "
+                                       "WITS-0 / WITSML rig feed under System → Live rig feed, or switch to the Assam "
+                                       "demo for the replay."})
         await ws.close()
         return
     # S.analogs may still be building at start-up: wait for it off the event loop, never on it
@@ -1115,16 +1126,21 @@ async def simulator_start(body: dict):
         src = S.hub.source
         await asyncio.to_thread(src.wait_ready, 5.0)
     port = src.bound_port or src.port
-    from_md = body.get("from_md")
+    from_md, from_index = body.get("from_md"), None
     if body.get("episode"):
         ep = next((e for e in S.db.kv_get("active_episodes") or [] if e["id"] == body["episode"]), None)
         if ep is None:
             raise HTTPException(404, "unknown scenario")
-        from_md = max(0.0, float(ep.get("onset_md") or ep["md"]) - 150)
+        if ep.get("t") is not None:      # a real, timed incident (Volve): start 30 min before it
+            from ..realtime.engine import episode_start_index
+            z = np.load(config.LOGS_DIR / "active_stream.npz")
+            from_index = episode_start_index(ep, z["t"], z["md"])
+        else:
+            from_md = max(0.0, float(ep.get("onset_md") or ep["md"]) - 150)
     speed = float(body["speed"]) if body.get("speed") is not None else 60.0   # 0 = as fast as possible
     if speed < 0:
         raise HTTPException(400, "speed must be 0 (as fast as possible) or a positive factor")
-    await asyncio.to_thread(ops.SIM.start, port, speed, float(from_md) if from_md else None)
+    await asyncio.to_thread(ops.SIM.start, port, speed, float(from_md) if from_md else None, from_index)
     return J({"simulator": ops.SIM.status(), "stream": _stream_payload()})
 
 
@@ -1154,6 +1170,86 @@ async def admin_sodir_csv(files: list[UploadFile] = File(...)):
             names.append(name)
     have = sorted(p.stem for p in dest.glob("*.csv"))
     return J({"saved": names, "have": have, "missing": [t for t in sodir.TABLES if t not in have]})
+
+
+VOLVE_RAW = config.ROOT / "volve_raw"      # uploaded Volve zips, extracted (gitignored, outside every data folder)
+
+
+def _existing_dir(p, what: str) -> str:
+    d = Path(str(p or "").strip().strip('"'))
+    if not str(d) or not d.is_dir():
+        raise HTTPException(400, f"{what} folder not found on this server: {p!r}")
+    return str(d)
+
+
+@app.post("/api/admin/volve/scan")
+def admin_volve_scan(body: dict):
+    """Wellbores in a Volve WITSML real-time folder (headers only), with coded incidents if a DDR folder is given."""
+    folder = _existing_dir(body.get("folder"), "WITSML")
+    ddr = _existing_dir(body["ddr_folder"], "Drilling report") if body.get("ddr_folder") else None
+
+    def run(job: Job):
+        from ..public import volve
+        job.stage = "Reading the log headers"
+        inv = volve.scan(folder, log=job.log)
+        incs = {}
+        if ddr:
+            job.stage = "Reading the daily drilling reports"
+            incs = volve.incidents(ddr)
+        rows = volve.summary(inv, incs)
+        job.log(f"{len(rows)} wellbores with drilling time logs")
+        return {"wellbores": rows, "folder": folder, "ddr_folder": ddr}
+    return J(_job_or_409(lambda: JOBS.start("volve-scan", "Scan Volve folder", run)).payload())
+
+
+@app.post("/api/admin/volve/import")
+def admin_volve_import(body: dict):
+    folder = _existing_dir(body.get("folder"), "WITSML")
+    ddr = _existing_dir(body["ddr_folder"], "Drilling report") if body.get("ddr_folder") else None
+    hours = float(body.get("hours") or 12.0)
+    if not 1 <= hours <= 72:
+        raise HTTPException(400, "hours must be between 1 and 72")
+    if not ops.dataset_status()["norway"]["built"]:
+        raise HTTPException(409, "build the North Sea knowledge base first: the Volve stream is added to it")
+
+    def done(job: Job):
+        if job.result.get("restart"):
+            job.stage = "Restarting to load it"
+            job.log("Restarting the server to load the Volve stream…")
+            ops.restart_soon(1.5)
+    return J(_job_or_409(lambda: JOBS.start(
+        "volve", "Import Volve rig stream",
+        lambda job: ops.import_volve(job, folder, ddr, body.get("wellbore") or None, hours),
+        exclusive=True, on_success=done)).payload())
+
+
+@app.post("/api/admin/volve/upload")
+async def admin_volve_upload(file: UploadFile = File(...)):
+    """A .zip of a Volve folder (or one wellbore folder), saved and unpacked on the server; returns its path."""
+    import zipfile
+    name = Path(file.filename or "").name
+    if not name.lower().endswith(".zip"):
+        raise HTTPException(400, "upload a .zip file")
+    VOLVE_RAW.mkdir(parents=True, exist_ok=True)
+    dest_zip = VOLVE_RAW / name
+    with dest_zip.open("wb") as out:
+        await asyncio.to_thread(shutil.copyfileobj, file.file, out, 1 << 20)
+    dest = VOLVE_RAW / dest_zip.stem
+
+    def unpack():
+        with zipfile.ZipFile(dest_zip) as z:
+            root = dest.resolve()
+            for m in z.namelist():                    # never write outside the target folder
+                if not (root / m).resolve().is_relative_to(root):
+                    raise HTTPException(400, f"unsafe path in zip: {m}")
+            z.extractall(dest)
+    try:
+        await asyncio.to_thread(unpack)
+    except zipfile.BadZipFile:
+        raise HTTPException(400, "not a valid .zip file") from None
+    finally:
+        dest_zip.unlink(missing_ok=True)
+    return J({"folder": str(dest)})
 
 
 @app.post("/api/admin/dataset")
@@ -1294,6 +1390,9 @@ def analytics_evaluate_live():
     kb()
     if not (config.LOGS_DIR / "active_stream.npz").exists():
         raise HTTPException(409, "this dataset has no recorded rig stream to replay")
+    if not S.db.kv_get("active_episodes"):
+        raise HTTPException(409, "this rig stream has no labelled incidents to score the alerts against "
+                                 "(real Volve data comes without them)")
 
     def run(job: Job):
         from ..realtime.evaluate import evaluate_live

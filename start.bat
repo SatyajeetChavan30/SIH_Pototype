@@ -1,29 +1,29 @@
 @echo off
-rem eRTMAC-NWIS launcher for Windows: double-click this file.
-rem First run: installs what NWIS needs (a few minutes), then opens the dashboard in your browser.
+rem StrataSense launcher for Windows: double-click this file.
+rem First run: installs what StrataSense needs (a few minutes), then opens the dashboard in your browser.
 rem Everything else - building the knowledge base, imports, live feed, settings - is done in the dashboard.
 setlocal
 cd /d "%~dp0"
-title eRTMAC-NWIS
+title StrataSense
 if "%PORT%"=="" set PORT=8000
 
 where py >nul 2>nul && (set "PYBOOT=py -3") || (set "PYBOOT=python")
 if not exist ".venv\Scripts\python.exe" (
-  echo [nwis] creating the Python environment...
+  echo [stratasense] creating the Python environment...
   %PYBOOT% -m venv .venv || goto :nopython
 )
 set "PY=.venv\Scripts\python.exe"
 
-"%PY%" -c "import nwis" >nul 2>nul
+"%PY%" -c "import stratasense" >nul 2>nul
 if errorlevel 1 (
-  echo [nwis] installing NWIS ^(first run only, a few minutes^)...
+  echo [stratasense] installing StrataSense ^(first run only, a few minutes^)...
   "%PY%" -m pip install -q --upgrade pip
   "%PY%" -m pip install -q -e "backend[dev,ocr]" || "%PY%" -m pip install -q -e "backend[dev]" || goto :failed
 )
 
 if not exist "frontend\dist\index.html" (
   where npm >nul 2>nul || goto :nonode
-  echo [nwis] building the web dashboard ^(first run only^)...
+  echo [stratasense] building the web dashboard ^(first run only^)...
   pushd frontend
   if not exist node_modules call npm install --no-audit --no-fund || (popd & goto :failed)
   call npm run build || (popd & goto :failed)
@@ -31,10 +31,10 @@ if not exist "frontend\dist\index.html" (
 )
 
 echo.
-echo [nwis] NWIS is starting. Your browser opens at http://localhost:%PORT%
-echo [nwis] Keep this window open while you use NWIS; close it to stop the server.
+echo [stratasense] StrataSense is starting. Your browser opens at http://localhost:%PORT%
+echo [stratasense] Keep this window open while you use StrataSense; close it to stop the server.
 echo.
-"%PY%" -m nwis.cli start --port %PORT% --open
+"%PY%" -m stratasense.cli start --port %PORT% --open
 goto :eof
 
 :nopython

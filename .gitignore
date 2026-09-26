@@ -9,7 +9,7 @@ __pycache__/
 /data_norway/
 /data*.staging/
 /data*.old/
-/nwis_settings.json
+/stratasense_settings.json
 # Frontend
 frontend/node_modules/
 frontend/dist/
@@ -18,3 +18,5 @@ frontend/dist/
 .idea/
 .vscode/
 frontend/*.tsbuildinfo
+# Uploaded Equinor Volve archives (licensed data, never committed)
+/volve_raw/

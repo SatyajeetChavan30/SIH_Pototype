@@ -5,7 +5,7 @@ and everything else - building the knowledge base, switching dataset, imports, e
 rig feed, the rig simulator, settings - is done in the browser. The other commands remain for scripting and CI
 (the dashboard's maintenance jobs also run some of them as subprocesses):
 build-demo | serve | import-volve <dir> | metrics | evaluate-live | evaluate-ocr | reread-scans | simulate-rig |
-validate-volve <dir> | build-public | retrain-risk | retrain-classifier
+validate-volve <dir> | build-public | import-volve-stream <dir> | retrain-risk | retrain-classifier
 """
 from __future__ import annotations
 
@@ -38,6 +38,15 @@ def main() -> None:
     bp.add_argument("--quadrants", default="15,16", help="comma-separated Norwegian quadrants, e.g. 15,16,25 ('all' = no filter)")
     bp.add_argument("--from-folder", default=None, help="folder with the Sodir CSV exports (default: <data dir>/public/sodir)")
     bp.add_argument("--download", action="store_true", help="download the CSV exports from factpages.sodir.no first")
+    vs = sub.add_parser("import-volve-stream", help="turn Equinor Volve real-time WITSML logs into the Live Ops rig "
+                                                    "stream of the North Sea dataset (run with STRATASENSE_REGION=norway)")
+    vs.add_argument("folder", help="the Volve 'WITSML Realtime drilling data' folder, or one wellbore folder in it")
+    vs.add_argument("--wellbore", default=None, help="e.g. '15/9-F-14' (default: one with coded incidents when --ddr is given, "
+                                                   "else the wellbore with the most drilling logs)")
+    vs.add_argument("--hours", type=float, default=12.0, help="length of the replay window picked from the logs")
+    vs.add_argument("--list", action="store_true", help="only list the wellbores found")
+    vs.add_argument("--ddr", default=None, help="folder of Volve daily drilling report XML: its operator-coded "
+                                                "incidents become the Live Ops scenarios")
     vv = sub.add_parser("validate-volve", help="score StrataSense on the public Equinor Volve DDR XML (download it first)")
     vv.add_argument("folder", help="folder containing Volve drillReport *.xml (searched recursively)")
     vv.add_argument("--limit", type=int, default=None, help="only read this many XML files")
@@ -88,6 +97,17 @@ def main() -> None:
         res = sodir.build(Path(a.from_folder) if a.from_folder else None, q, a.download)
         print(json.dumps(res, indent=1, default=str))
         print(sodir.ATTRIBUTION)
+    elif a.cmd == "import-volve-stream":
+        from .config import REGION
+        from .public import volve
+        if REGION != "norway" and not a.list:
+            raise SystemExit("The Volve stream belongs to the North Sea dataset: run with STRATASENSE_REGION=norway "
+                             "(and STRATASENSE_DATA_DIR=data_norway), or switch to it in the dashboard first.")
+        res = volve.import_stream(a.folder, a.wellbore, a.hours, a.list, a.ddr)
+        print(json.dumps(res, indent=1, default=str))
+        if not a.list:
+            print(volve.ATTRIBUTION)
+            print("Restart the server (System -> Restart, or switch datasets) to load the new stream.")
     elif a.cmd == "validate-volve":
         from .db import DB
         from .validate.volve import run_and_store

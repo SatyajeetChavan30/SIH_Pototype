@@ -54,7 +54,7 @@ export default function Ingestion() {
   return <div className="col">
     <div>
       <h2 className="view">Document Ingestion — NLP + OCR pipeline</h2>
-      <p className="lede">Drop a DDR/WCR PDF (text or scanned) or WITSML drillReport XML. NWIS extracts events with depth, formation, severity, actions and outcomes, handles negation ("no losses observed") and precautions ("LCM kept ready"), normalises units (m/ft, ppg/SG, bbl/hr, m³/hr), merges with existing knowledge, and queues low-confidence items for human review. Everything stays on-prem.</p>
+      <p className="lede">Drop a DDR/WCR PDF (text or scanned) or WITSML drillReport XML. StrataSense extracts events with depth, formation, severity, actions and outcomes, handles negation ("no losses observed") and precautions ("LCM kept ready"), normalises units (m/ft, ppg/SG, bbl/hr, m³/hr), merges with existing knowledge, and queues low-confidence items for human review. Everything stays on-prem.</p>
     </div>
     <div className="grid2">
       <div className="col">

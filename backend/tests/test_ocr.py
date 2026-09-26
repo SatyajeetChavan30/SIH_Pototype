@@ -1,8 +1,8 @@
 """OCR on scanned reports: digit repair, casing-shoe depths, and full-width lines surviving recognition."""
 import pytest
 
-from nwis.ingest.pdf import fix_ocr_digits
-from nwis.ingest.pipeline import WellCtx, _named_shoe, detect_kind
+from stratasense.ingest.pdf import fix_ocr_digits
+from stratasense.ingest.pipeline import WellCtx, _named_shoe, detect_kind
 
 
 @pytest.mark.parametrize("raw,fixed", [
@@ -27,7 +27,7 @@ def test_fix_ocr_digits(raw, fixed):
 
 
 def test_report_kind_survives_glued_ocr_headings():
-    assert detect_kind("NWIS DEMO\nWELL COMPLETIONREPORT\nWell: SSN-01") == "WCR"
+    assert detect_kind("STRATASENSE DEMO\nWELL COMPLETIONREPORT\nWell: SSN-01") == "WCR"
     assert detect_kind("DAILYDRILLING REPORT - NDH-21") == "DDR"
     assert detect_kind("Mud logging summary") == "OTHER"
 
@@ -44,11 +44,11 @@ def test_cementing_sentence_is_placed_at_the_named_casing_shoe():
 
 def test_full_width_lines_survive_ocr(tmp_path):
     """RapidOCR's angle classifier used to flip long lines to 180 degrees and return nothing for them."""
-    from nwis.ingest.ocr import get_ocr_engine
+    from stratasense.ingest.ocr import get_ocr_engine
     if not getattr(get_ocr_engine(), "name", "").startswith("rapidocr"):   # either rapidocr-onnxruntime 1.x or rapidocr 3.x
         pytest.skip("RapidOCR not installed")
-    from nwis.data import docs_gen
-    from nwis.ingest.pdf import extract_pages
+    from stratasense.data import docs_gen
+    from stratasense.ingest.pdf import extract_pages
 
     long_line = "- High torque with torque spikes observed while drilling at 2,853 m in Barail. Reduced drilling"
     w = docs_gen.PdfWriter(fontsize=8.6)
@@ -70,13 +70,13 @@ def test_full_width_lines_survive_ocr(tmp_path):
 
 def test_scans_stored_without_ocr_can_be_reread_later(tmp_path, monkeypatch):
     """A scan ingested before OCR was installed is flagged, listed, and read properly once OCR is available."""
-    from nwis.ingest import pdf as pdfmod
-    from nwis.ingest.ocr import get_ocr_engine
+    from stratasense.ingest import pdf as pdfmod
+    from stratasense.ingest.ocr import get_ocr_engine
     if not getattr(get_ocr_engine(), "name", "").startswith("rapidocr"):
         pytest.skip("RapidOCR not installed")
-    from nwis.data import docs_gen
-    from nwis.db import DB
-    from nwis.ingest.pipeline import Ingestor
+    from stratasense.data import docs_gen
+    from stratasense.db import DB
+    from stratasense.ingest.pipeline import Ingestor
 
     w = docs_gen.PdfWriter(fontsize=8.6)
     w.new_page()

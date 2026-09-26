@@ -32,16 +32,16 @@ export interface LiveData {
 
 /** Who is at the console: written into the decision log with every acknowledgement and feedback. */
 export function getActor(): string {
-  try { return localStorage.getItem("nwis.actor") || "RTOC"; } catch { return "RTOC"; }
+  try { return localStorage.getItem("stratasense.actor") || "RTOC"; } catch { return "RTOC"; }
 }
 export function setActor(v: string) {
-  try { localStorage.setItem("nwis.actor", v); } catch { /* private mode: keep default */ }
+  try { localStorage.setItem("stratasense.actor", v); } catch { /* private mode: keep default */ }
 }
 
 const MAX_SAMPLES = 480;
-const SNAP_KEY = "nwis.rigSnapshot";
-const OUTBOX_KEY = "nwis.outbox";
-const MODE_KEY = "nwis.streamMode";
+const SNAP_KEY = "stratasense.rigSnapshot";
+const OUTBOX_KEY = "stratasense.outbox";
+const MODE_KEY = "stratasense.streamMode";
 
 function load<T>(key: string, dflt: T): T {
   try { const v = localStorage.getItem(key); return v ? JSON.parse(v) as T : dflt; } catch { return dflt; }
@@ -141,7 +141,10 @@ class LiveStore {
   onMessage(m: any) {
     const d = this.d;
     if (m.type === "error" && m.code === "no_stream") {
-      d.noStream = m.message;
+      // this dataset has no stream: drop the rig picture cached from another dataset (e.g. the Assam replay)
+      d.noStream = m.message; d.status = null; d.alerts = new Map(); d.zones = []; d.tops = {}; d.window = {};
+      d.sections = []; d.sessionId = null; d.offlineSince = null;
+      try { localStorage.removeItem(SNAP_KEY); } catch { /* blocked storage: nothing cached either */ }
     } else if (m.type === "init") {
       // the server serves the replay when no live feed is connected (e.g. it was switched off in System)
       if (m.mode && m.mode !== d.mode) { d.mode = m.mode; save(MODE_KEY, m.mode); }

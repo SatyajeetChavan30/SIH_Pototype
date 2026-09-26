@@ -1,4 +1,4 @@
-/* NWIS service worker: keeps the rig-site app usable when the VSAT link to the RTOC drops.
+/* StrataSense service worker: keeps the rig-site app usable when the VSAT link to the RTOC drops.
  *
  * - App shell (index, JS/CSS bundles, icons) is precached from /precache.json, written at build time.
  * - Static assets: cache first (their file names are content hashes).
@@ -7,8 +7,8 @@
  * The live picture itself (status, alerts, look-ahead) is cached by the app in localStorage, and
  * acknowledgements made offline are queued there and sent when the link returns.
  */
-const SHELL = "nwis-shell";
-const API = "nwis-api";
+const SHELL = "stratasense-shell";
+const API = "stratasense-api";
 const API_CACHED = [/^\/api\/meta$/, /^\/api\/wells$/, /^\/api\/risk\/profile/, /^\/api\/risk\/mw-window/, /^\/api\/recommend/];
 
 self.addEventListener("install", (event) => {
@@ -24,10 +24,11 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
-    // keep only the newest versioned shell (names are nwis-shell-<build timestamp>; other caches are left alone)
-    const shells = keys.filter((k) => /^nwis-shell-\d+$/.test(k)).sort((a, b) => Number(a.split("-").pop()) - Number(b.split("-").pop()));
+    // keep only the newest versioned shell (names are stratasense-shell-<build timestamp>; other caches are left alone)
+    const shells = keys.filter((k) => /^stratasense-shell-\d+$/.test(k)).sort((a, b) => Number(a.split("-").pop()) - Number(b.split("-").pop()));
     await Promise.all(shells.slice(0, -1).map((k) => caches.delete(k)));
-    await caches.delete("nwis-shell-nav");   // navigation cache name used by the first release of this worker
+    // caches from before the rename to StrataSense (nwis-shell-*, nwis-api, nwis-nav, nwis-assets)
+    await Promise.all(keys.filter((k) => k.startsWith("nwis-")).map((k) => caches.delete(k)));
     await self.clients.claim();
   })());
 });
@@ -51,11 +52,11 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin || url.pathname.startsWith("/ws/")) return;
   if (req.mode === "navigate") {
-    event.respondWith(networkFirst(req, "nwis-nav", "/index.html"));
+    event.respondWith(networkFirst(req, "stratasense-nav", "/index.html"));
   } else if (url.pathname.startsWith("/assets/")) {
     // hashed bundles: cache first, and store on first fetch so a build newer than this worker still works offline
     event.respondWith(caches.match(req).then((hit) => hit || fetch(req).then(async (res) => {
-      if (res.ok) (await caches.open("nwis-assets")).put(req, res.clone());
+      if (res.ok) (await caches.open("stratasense-assets")).put(req, res.clone());
       return res;
     })));
   } else if (API_CACHED.some((re) => re.test(url.pathname))) {

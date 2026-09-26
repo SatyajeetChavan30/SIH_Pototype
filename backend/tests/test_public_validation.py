@@ -1,13 +1,13 @@
 """Real-data validation pipeline (Equinor Volve format), exercised on a SYNTHETIC Volve-style fixture.
 
 The fixture only mimics the XML structure (namespaces, ft depths, operator activity codes). Real numbers come
-from `python -m nwis.cli validate-volve <folder>` on the downloaded public data.
+from `python -m stratasense.cli validate-volve <folder>` on the downloaded public data.
 """
 import pytest
 
-from nwis import config
-from nwis.ingest.witsml import parse_drill_reports, reports_to_pages
-from nwis.validate.volve import code_hazard, labelled_sentences, load_reports, truth_events
+from stratasense import config
+from stratasense.ingest.witsml import parse_drill_reports, reports_to_pages
+from stratasense.validate.volve import code_hazard, labelled_sentences, load_reports, truth_events
 
 NS = "http://www.witsml.org/schemas/1series"
 
@@ -58,7 +58,7 @@ def test_free_text_rendering_does_not_leak_operator_codes(tmp_path):
 
 @pytest.mark.skipif(not (config.MODELS_DIR / "sentence_clf.joblib").exists(), reason="demo models not built")
 def test_volve_evaluation_runs_end_to_end(tmp_path):
-    from nwis.validate.volve import evaluate_volve
+    from stratasense.validate.volve import evaluate_volve
     _write_fixture(tmp_path, 3)
     res = evaluate_volve(tmp_path, k_steps=(0, 2), folds=3, log=lambda *_: None)
     assert res["n_wells"] == 3 and res["n_reports"] == 12

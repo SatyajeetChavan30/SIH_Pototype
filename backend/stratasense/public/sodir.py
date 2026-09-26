@@ -329,6 +329,9 @@ def build(folder: Path | None = None, quadrants: set[str] | None = None, downloa
     if latest:
         db.execute("UPDATE wells SET is_active=1 WHERE id=?", (latest["id"],))
         db.kv_set("active_well", latest["id"])
+    from . import volve
+    if volve.artifact(config.DATA_DIR):   # a real Volve rig stream was imported earlier: it becomes the active well
+        volve.apply(db, config.DATA_DIR, log=log)
     db.kv_set("public_source", {"source": "Sodir FactPages", "licence": "NLOD 2.0", "attribution": ATTRIBUTION,
                                 "quadrants": sorted(quadrants) if quadrants else None, "wells": len(ids),
                                 "histories": len(pages), "events": n_ev})

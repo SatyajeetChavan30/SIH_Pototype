@@ -16,6 +16,7 @@ import importlib
 import os
 import shutil
 import sqlite3
+import subprocess
 import sys
 import threading
 import time
@@ -32,7 +33,8 @@ DATASETS = {
                        "(some scanned), drilling logs and the eRTMAC stream of the active well. Fully offline."},
     "norway": {"label": "Real public data: Norwegian North Sea (Sodir)", "synthetic": False,
                "about": "Real wellbores, formation tops, casing, mud and wellbore histories from the Norwegian "
-                        "Offshore Directorate's FactPages (NLOD open licence). No real-time stream."},
+                        "Offshore Directorate's FactPages (NLOD open licence). Live Ops replays real Volve rig data "
+                        "(Equinor) once it has been imported with import-volve-stream."},
 }
 ASSAM_BUILD_STAGES = [          # (log text, progress when it appears, label)
     ("generating synthetic", 0.02, "Generating wells, tops and trajectories"),
@@ -92,6 +94,8 @@ def dataset_status() -> dict:
         built = (final / config.DB_NAME).exists()
         info = _read_kv(final / config.DB_NAME, "build_info") if built and code != config.REGION else None
         out[code] = {**d, "code": code, "built": built, "current": code == config.REGION, "path": str(final),
+                     "stream": (final / "logs" / "active_stream.npz").exists(),
+                     "stream_source": _read_kv(final / config.DB_NAME, "stream_source") if built else None,
                      "staged": (staging_of(final) / BUILD_OK).exists(), "build_info": info}
     out["norway"]["needs"] = None if (config.data_dir_for("assam") / "models" / "sentence_clf.joblib").exists() else \
         "Build the synthetic Assam demo first: its report-reading model is reused for the North Sea histories."
@@ -122,6 +126,9 @@ def build_dataset(job: Job, region: str, quadrants: str = "15,16", download: boo
             job.log(f"Using {len(list(dst.glob('*.csv')))} FactPages CSV exports")
         elif not download:
             raise RuntimeError("No FactPages CSV exports yet: tick 'download from Sodir' or upload the CSV files.")
+        volve = final / "public" / "volve"      # imported Volve rig stream (import-volve-stream): keep it
+        if volve.exists():
+            shutil.copytree(volve, st / "public" / "volve", dirs_exist_ok=True)
         q = ",".join(x.strip() for x in (quadrants or "").split(",") if x.strip()) or "all"
         args = [sys.executable, "-m", "stratasense.cli", "build-public", "--quadrants", q] + (["--download"] if download else [])
         stages = NORWAY_BUILD_STAGES
@@ -139,6 +146,39 @@ def build_dataset(job: Job, region: str, quadrants: str = "15,16", download: boo
     (st / BUILD_OK).write_text(time.strftime("%Y-%m-%dT%H:%M:%S"), encoding="utf-8")
     job.stage = "Built; loading it"
     return {"region": region, "staging": str(st)}
+
+
+VOLVE_STAGES = [
+    ("scanned", 0.10, "Reading the log headers"),
+    ("reading", 0.15, "Reading the real-time logs"),
+    ("parsed", 0.20, "Reading the real-time logs"),
+    ("coded incidents", 0.80, "Matching the drilling reports' incidents"),
+    ("window", 0.85, "Picking the replay window"),
+    ("installed", 0.95, "Installing the stream"),
+]
+
+
+def import_volve(job: Job, folder: str, ddr_folder: str | None = None, wellbore: str | None = None,
+                 hours: float = 12.0) -> dict:
+    """Run `import-volve-stream` for the North Sea dataset in a helper process (the XML can run to gigabytes)."""
+    if not dataset_status()["norway"]["built"]:
+        raise RuntimeError("Build the North Sea knowledge base first: the Volve stream is added to it.")
+    env = {"STRATASENSE_DATA_DIR": str(data_dir("norway")), "STRATASENSE_REGION": "norway"}
+    args = [sys.executable, "-m", "stratasense.cli", "import-volve-stream", folder, "--hours", str(hours)]
+    if ddr_folder:
+        args += ["--ddr", ddr_folder]
+    if wellbore:
+        args += ["--wellbore", wellbore]
+    job.progress, job.stage = 0.0, "Starting"
+
+    def on_line(line: str):
+        low = line.lower()
+        for key, p, label in VOLVE_STAGES:
+            if key in low and (job.progress or 0) <= p:
+                job.progress, job.stage = p, label
+
+    run_process(job, args, env, cwd=str(config.ROOT / "backend"), on_line=on_line)
+    return {"region": "norway", "restart": config.REGION == "norway"}
 
 
 def _carry_over(old_db: Path, new_db: Path) -> None:
@@ -246,8 +286,10 @@ def restart_soon(delay: float = 0.8) -> None:
         sys.stdout.flush()
         if supervised():
             os._exit(RESTART_EXIT)
-        argv = list(getattr(sys, "orig_argv", None) or [sys.executable, *sys.argv])
-        os.execv(sys.executable, [sys.executable, *argv[1:]])
+        argv = [sys.executable, *list(getattr(sys, "orig_argv", None) or [sys.executable, *sys.argv])[1:]]
+        if os.name == "nt":     # Windows execv joins argv with bare spaces: quote paths such as "D:\pd\chosen one\..."
+            argv = [subprocess.list2cmdline([a]) for a in argv]
+        os.execv(sys.executable, argv)
     threading.Thread(target=go, daemon=True, name="stratasense-restart").start()
 
 
@@ -273,10 +315,10 @@ class RigSimulator:
     def available(self) -> bool:
         return (config.LOGS_DIR / "active_stream.npz").exists()
 
-    def start(self, port: int, speed: float, from_md: float | None) -> None:
+    def start(self, port: int, speed: float, from_md: float | None, from_index: int | None = None) -> None:
         from .realtime import simulator
         self.stop()
-        start = simulator.start_index_for_md(from_md) if from_md else 0
+        start = from_index if from_index is not None else simulator.start_index_for_md(from_md) if from_md else 0
         import numpy as np
         self.total = int(len(np.load(config.LOGS_DIR / "active_stream.npz")["t"])) - start
         self.stop_evt = threading.Event()

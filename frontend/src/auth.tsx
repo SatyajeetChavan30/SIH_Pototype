@@ -7,7 +7,7 @@ export type Role = "field" | "office" | "admin";
 export interface User { username: string; display_name: string; role: Role }
 
 interface AuthCtx {
-  user: User | null;        // null when sign-in is switched off on the server (NWIS_AUTH=off)
+  user: User | null;        // null when sign-in is switched off on the server (STRATASENSE_AUTH=off)
   authOn: boolean;
   /** True when the signed-in role may use a feature restricted to `roles` (always true with sign-in off). */
   can: (...roles: Role[]) => boolean;
@@ -18,7 +18,7 @@ const Ctx = createContext<AuthCtx>({ user: null, authOn: false, can: () => true,
 export const useAuth = () => useContext(Ctx);
 export const OFFICE: Role[] = ["office", "admin"];
 
-const USER_KEY = "nwis.user";
+const USER_KEY = "stratasense.user";
 const ROLE_LABEL: Record<Role, string> = { field: "Field / rig site", office: "Office / RTOC", admin: "Administrator" };
 export const roleLabel = (r: Role) => ROLE_LABEL[r] ?? r;
 
@@ -49,7 +49,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   }, []);
 
   if (setup) return <Setup initial={setup} />;
-  if (!state.ready) return <div className="empty" style={{ padding: 40 }}>Loading NWIS…</div>;
+  if (!state.ready) return <div className="empty" style={{ padding: 40 }}>Loading StrataSense…</div>;
   if (state.authOn && !state.user) return <Login demo={state.demo} onDone={(u) => { remember(u); setState((s) => ({ ...s, user: u })); }} />;
 
   const { user, authOn } = state;
@@ -58,7 +58,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     can: (...roles) => !authOn || (!!user && roles.includes(user.role)),
     logout: () => {
       // drop the offline copy of API data too, so the next person on a shared tablet starts clean
-      const clearCache = "caches" in window ? caches.delete("nwis-api").catch(() => false) : Promise.resolve(false);
+      const clearCache = "caches" in window ? caches.delete("stratasense-api").catch(() => false) : Promise.resolve(false);
       api("/api/auth/logout", { method: "POST" }).catch(() => undefined)
         .finally(() => clearCache.finally(() => { remember(null); location.reload(); }));
     },
@@ -84,7 +84,7 @@ function Login({ demo, onDone }: { demo: { username: string; role: Role }[]; onD
     <form className="card login" onSubmit={submit}>
       <div className="brand" style={{ marginBottom: 4 }}>
         <Logo />
-        <span>eRTMAC-NWIS <small>Nearby Wells Intelligence System</small></span>
+        <span>StrataSense <small>Nearby Wells Intelligence System</small></span>
       </div>
       <h2 className="view" style={{ margin: "8px 0 2px" }}>Sign in</h2>
       <p className="small muted" style={{ margin: "0 0 12px" }}>Your name goes into the decision log with every acknowledgement and approval.</p>

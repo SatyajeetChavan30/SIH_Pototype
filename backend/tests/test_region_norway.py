@@ -1,4 +1,4 @@
-"""Real public-data region (NWIS_REGION=norway): the region switch and the Sodir importer.
+"""Real public-data region (STRATASENSE_REGION=norway): the region switch and the Sodir importer.
 
 The region is chosen when modules are imported, so these tests run the Norway code in a subprocess with its own
 data folder; the Assam demo in this process is untouched. The fixture rows are SAMPLES in the Sodir export column
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from nwis import config
+from stratasense import config
 
 FIX = Path(__file__).parent / "fixtures" / "sodir"
 needs_models = pytest.mark.skipif(not (config.ROOT / "data" / "models" / "sentence_clf.joblib").exists(),
@@ -20,7 +20,7 @@ needs_models = pytest.mark.skipif(not (config.ROOT / "data" / "models" / "senten
 
 
 def _run(code: str, data_dir: Path) -> dict:
-    env = {**os.environ, "NWIS_REGION": "norway", "NWIS_DATA_DIR": str(data_dir), "NWIS_AUTH": "off"}
+    env = {**os.environ, "STRATASENSE_REGION": "norway", "STRATASENSE_DATA_DIR": str(data_dir), "STRATASENSE_AUTH": "off"}
     out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=600,
                          cwd=Path(__file__).parents[1])
     assert out.returncode == 0, out.stderr[-3000:]
@@ -30,8 +30,8 @@ def _run(code: str, data_dir: Path) -> dict:
 def test_norway_ontology_and_absent_units_pinch_out(tmp_path):
     res = _run("""
 import json
-from nwis.domain import ontology as o
-from nwis.ingest.nlp import detect_formation
+from stratasense.domain import ontology as o
+from stratasense.ingest.nlp import detect_formation
 print(json.dumps({"order": o.FORMATION_ORDER, "td": o.DEFAULT_TD, "surface": o.SURFACE,
                   "lista": detect_formation("gas kick in the Lista Formation"),
                   "chalk": detect_formation("losses in the Shetland Group chalk")}))
@@ -46,10 +46,10 @@ def test_sodir_build_from_fixture(tmp_path):
     res = _run(f"""
 import json
 from pathlib import Path
-from nwis.public import sodir
-from nwis.db import DB
-from nwis.kb import KnowledgeBase
-from nwis.correlation import default_plan, predict_tops, target_from_well
+from stratasense.public import sodir
+from stratasense.db import DB
+from stratasense.kb import KnowledgeBase
+from stratasense.correlation import default_plan, predict_tops, target_from_well
 r = sodir.build(Path(r"{FIX}"), {{"15"}}, False, log=lambda *_: None)
 db = DB(); kb = KnowledgeBase(db)
 w = kb.wells["15/9-X1"]

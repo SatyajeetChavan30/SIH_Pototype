@@ -1,13 +1,13 @@
 """Live rig-feed tests: WITS-0 byte-stream decoding, WITSML log parsing, and an end-to-end run in which the
-rig simulator pushes real WITS-0 frames over TCP into NWIS and the S1 loss is detected on the live path."""
+rig simulator pushes real WITS-0 frames over TCP into StrataSense and the S1 loss is detected on the live path."""
 import threading
 import time
 
 import pytest
 
-from nwis import config
-from nwis.ingest.wits0 import Wits0Decoder, packet_time, to_packet
-from nwis.ingest.witsml_log import parse_log
+from stratasense import config
+from stratasense.ingest.wits0 import Wits0Decoder, packet_time, to_packet
+from stratasense.ingest.witsml_log import parse_log
 
 
 def test_wits0_decoder_reassembles_split_and_noisy_packets():
@@ -39,10 +39,10 @@ def test_witsml_log_rows_are_mapped_and_converted():
 
 @pytest.mark.skipif(not config.DB_PATH.exists(), reason="demo knowledge base not built")
 def test_live_wits0_feed_detects_s1_losses():
-    from nwis.kb import KnowledgeBase
-    from nwis.realtime import simulator
-    from nwis.realtime.engine import LiveSession
-    from nwis.realtime.sources import Wits0TcpSource
+    from stratasense.kb import KnowledgeBase
+    from stratasense.realtime import simulator
+    from stratasense.realtime.engine import LiveSession
+    from stratasense.realtime.sources import Wits0TcpSource
 
     kb = KnowledgeBase()
     src = Wits0TcpSource("listen", "127.0.0.1", 0).start()
@@ -77,10 +77,10 @@ def test_live_wits0_feed_detects_s1_losses():
 @pytest.mark.skipif(not config.DB_PATH.exists(), reason="demo knowledge base not built")
 def test_live_hub_broadcasts_and_flags_stream_gap():
     import asyncio
-    from nwis.kb import KnowledgeBase
-    from nwis.realtime import simulator
-    from nwis.realtime.hub import LiveHub
-    from nwis.realtime.sources import Wits0TcpSource
+    from stratasense.kb import KnowledgeBase
+    from stratasense.realtime import simulator
+    from stratasense.realtime.hub import LiveHub
+    from stratasense.realtime.sources import Wits0TcpSource
 
     async def scenario():
         src = Wits0TcpSource("listen", "127.0.0.1", 0)

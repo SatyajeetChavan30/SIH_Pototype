@@ -1,6 +1,6 @@
-# eRTMAC-NWIS: End Goal and Vision
+# StrataSense: End Goal and Vision
 
-**What NWIS must become at full deployment inside Oil India, how we will know it worked, and why it will beat what exists today.**
+**What StrataSense must become at full deployment inside Oil India, how we will know it worked, and why it will beat what exists today.**
 SIH 2026 · Problem Statement 26121 · Oil India Limited · Smart Automation
 
 > **North Star:** *No drilling team at OIL is surprised by a hazard that an offset well has already met.*
@@ -11,7 +11,7 @@ This document describes the **end state**. For what the prototype does today, se
 
 ## 1. The end goal in one paragraph
 
-At the end of this journey, NWIS is **Oil India's institutional drilling memory**. Every Daily Drilling Report, Well Completion Report, mud log, scanned legacy file and senior engineer's hard-won experience since the company began drilling in Assam is turned into structured, cited knowledge. That knowledge is then put to work in three places. Before spud, it gives planners a formation-by-formation hazard brief with honest uncertainty. While drilling, it runs next to eRTMAC and speaks up **before the bit reaches a problem interval**, telling the crew what happened in which offset well, on which report page, and what actually fixed it. After every well, it learns: today's well becomes tomorrow's offset. It runs **on OIL's own servers, without internet access**, and every statement it makes can be traced to a source.
+At the end of this journey, StrataSense is **Oil India's institutional drilling memory**. Every Daily Drilling Report, Well Completion Report, mud log, scanned legacy file and senior engineer's hard-won experience since the company began drilling in Assam is turned into structured, cited knowledge. That knowledge is then put to work in three places. Before spud, it gives planners a formation-by-formation hazard brief with honest uncertainty. While drilling, it runs next to eRTMAC and speaks up **before the bit reaches a problem interval**, telling the crew what happened in which offset well, on which report page, and what actually fixed it. After every well, it learns: today's well becomes tomorrow's offset. It runs **on OIL's own servers, without internet access**, and every statement it makes can be traced to a source.
 
 ## 2. How the end state answers Problem Statement 26121
 
@@ -19,11 +19,11 @@ At the end of this journey, NWIS is **Oil India's institutional drilling memory*
 |---|---|---|---|
 | i | AI, NLP and OCR to extract and structure information from drilling reports | Whole-archive ingestion (text PDFs, scans, WITSML, spreadsheets) plus **voice capture of expert knowledge**. Local fine-tuning per field and contractor with a small labelling budget | **Built** on synthetic data: NLP with negation and hypothetical handling, OCR, units, review queue ([SOLUTION §3.7](SOLUTION.md#37-evidence-grounded-document-understanding)). **Expert memos** (typed; voice through optional on-prem ASR) with peer review ([§3.15](SOLUTION.md#315-institutional-memory-expert-memos-after-action-reviews-shift-handover)). Needs re-measurement on OIL's archive |
 | ii | Interactive map of nearby wells within a user-defined radius | Map with radius **and** structure/fault awareness, 3D trajectory distance, and click-anywhere assessment of a planned location | **Built** (Offset Map view). 3D trajectory distance is roadmap |
-| iii | Searchable knowledge repository of events, lessons and mitigations | Hybrid search, knowledge graph and a grounded assistant that answers with statistics and citations and **abstains** when evidence is thin | **Built**: hybrid BM25 + LSA search, query parser, Ask NWIS, knowledge graph ([SOLUTION §3.8](SOLUTION.md#38-query-understanding-without-an-llm)), cited after-action reviews that become lessons ([§3.15](SOLUTION.md#315-institutional-memory-expert-memos-after-action-reviews-shift-handover)) |
+| iii | Searchable knowledge repository of events, lessons and mitigations | Hybrid search, knowledge graph and a grounded assistant that answers with statistics and citations and **abstains** when evidence is thin | **Built**: hybrid BM25 + LSA search, query parser, Ask StrataSense, knowledge graph ([SOLUTION §3.8](SOLUTION.md#38-query-understanding-without-an-llm)), cited after-action reviews that become lessons ([§3.15](SOLUTION.md#315-institutional-memory-expert-memos-after-action-reviews-shift-handover)) |
 | iv | Correlate geological, drilling and reservoir data by depth and formation | **Formation-aligned** correlation with live, automatic top re-anchoring from gamma-ray and ROP | **Built**: formation projection with IDW tops ± σ, re-anchoring from mud-logger picks ([SOLUTION §3.1](SOLUTION.md#31-formation-aligned-look-ahead)). **DTW auto-picking built** as an independent QC (median 8 m error on synthetic tops; [§3.12](SOLUTION.md#312-automatic-formation-top-picking-dtw)) |
 | v | Predictive models for mud losses, stuck pipe, overpressure, torque spikes, cementing issues | Calibrated risk by depth for every hazard, an offset-derived mud-weight window, and **causal** estimates of which mitigations work | **Built**: Beta-Binomial ribbon, HistGB model, MW window ([SOLUTION §3.2–3.3](SOLUTION.md#32-uncertainty-aware-risk-ribbon)), **case-mix-adjusted mitigation ranking** and a **what-if planner** ([§3.6](SOLUTION.md#36-what-worked-recommendations-and-analog-replay), [§3.14](SOLUTION.md#314-what-if-planner)). Stuck-pipe ML is weak and currently given zero weight |
-| vi | Real-time alerts and recommendations | Physics-residual and statistically calibrated detectors, fused with the look-ahead, with a **stated false-alarm budget** and an audit trail | **Built** on stream replay ([SOLUTION §3.4–3.6](SOLUTION.md#34-physics-informed-real-time-detectors)), with **physics baselines, a conformal alarm budget with digest, and the decision black box** ([§3.11](SOLUTION.md#311-alarm-budget-physics-baselines-and-conformal-calibration), [§3.13](SOLUTION.md#313-decision-black-box)). **Live WITS-0 / WITSML 1.4.1 adapters built** and tested with a rig simulator over TCP ([§3.16](SOLUTION.md#316-live-rig-feed-adapter-next-to-ertmac)); connection to OIL's actual eRTMAC endpoint is the pilot step |
-| vii | User-friendly dashboard for field and office staff | RTOC console, rig-site view, planner workspace, tablet client and optional Assamese/Hindi interface | **Built**: seven web views with **field / office / admin sign-in** ([§3.18](SOLUTION.md#318-sign-in-and-roles)), a cited shift-handover brief, and an **installable rig-site app that works offline** and queues acknowledgements ([§3.19](SOLUTION.md#319-rig-site-offline-app)) |
+| vi | Real-time alerts and recommendations | Physics-residual and statistically calibrated detectors, fused with the look-ahead, with a **stated false-alarm budget** and an audit trail | **Built** on stream replay ([SOLUTION §3.4–3.6](SOLUTION.md#34-physics-informed-real-time-detectors)), with **physics baselines, a conformal alarm budget with digest, and the decision black box** ([§3.11](SOLUTION.md#311-alarm-budget-physics-baselines-and-conformal-calibration), [§3.13](SOLUTION.md#313-decision-black-box)). **Live WITS-0 / WITSML 1.4.1 adapters built** and tested with a rig simulator over TCP ([§3.16](SOLUTION.md#316-live-rig-feed-adapter-next-to-ertmac)). An importer that replays Equinor's real Volve rig logs on the North Sea dataset is built and tested on Volve-format samples; it is waiting for the real download. Connection to OIL's actual eRTMAC endpoint is the pilot step |
+| vii | User-friendly dashboard for field and office staff | RTOC console, rig-site view, planner workspace, tablet client and optional Assamese/Hindi interface | **Built**: eight web views (System for admins) with **field / office / admin sign-in** ([§3.18](SOLUTION.md#318-sign-in-and-roles)), a cited shift-handover brief, and an **installable rig-site app that works offline** and queues acknowledgements ([§3.19](SOLUTION.md#319-rig-site-offline-app)) |
 
 ## 3. Who it serves at full deployment
 
@@ -42,8 +42,8 @@ Each pillar lists what it is, why it matters, and the evidence behind it.
 
 ### A. Institutional memory engine
 - **Everything, since inception.** DDRs, WCRs, mud logs, casing and cementing records, fishing reports and NPT records, including decades of scanned paper. Ingestion is a one-time batch for the archive, then a daily trickle for active wells.
-- **Tacit knowledge capture.** Much of OIL's know-how sits with senior engineers. NWIS lets them record short voice notes ("in Hapjan the Sylhet losses only stopped with cement plugs") in **Assamese, Hindi or English**. Speech is transcribed on-prem with Indic speech models [20][21], linked to wells and formations, and stored as a cited "expert memo" that goes through the same review queue as extracted events.
-- **Automatic after-action reviews.** After every NPT event, NWIS drafts a short review (symptoms, timeline, actions, outcome, NPT) from the DDRs and the sensor stream. The engineer corrects and approves it, and it becomes a first-class lesson.
+- **Tacit knowledge capture.** Much of OIL's know-how sits with senior engineers. StrataSense lets them record short voice notes ("in Hapjan the Sylhet losses only stopped with cement plugs") in **Assamese, Hindi or English**. Speech is transcribed on-prem with Indic speech models [20][21], linked to wells and formations, and stored as a cited "expert memo" that goes through the same review queue as extracted events.
+- **Automatic after-action reviews.** After every NPT event, StrataSense drafts a short review (symptoms, timeline, actions, outcome, NPT) from the DDRs and the sensor stream. The engineer corrects and approves it, and it becomes a first-class lesson.
 - **Closed loop.** The active well's reports are ingested daily, so every well drilled makes the next one safer.
 - **Why it matters.** The PS asks for a system with "institutional memory". Knowledge that depends on who happens to be on shift is lost when people move or retire.
 - **Evidence.** Digital-first tools ignore scanned history [R-19]. NLP on drilling reports is well established [R-20][R-21][R-22]. DDR models do **not** transfer between operators without local labels, but about 60 labelled local report-days recovered roughly 90% of the achievable gain in one study [7]. That is why local labelling is built into the plan (Section 7).
@@ -55,12 +55,12 @@ Each pillar lists what it is, why it matters, and the evidence behind it.
 - **Why it matters.** In the Assam-Arakan basin, tops shift by hundreds of metres across structures, and pressure regimes change across thrusts [R-6]. A depth-only overlay points the warning at the wrong depth.
 
 ### C. Trustworthy alerts
-- **A stated false-alarm budget.** Detector thresholds are calibrated with conformal prediction, which gives distribution-free bounds on the false-alarm rate [18]. The RTOC sets the budget, and NWIS keeps alarm rates inside ISA-18.2 guidance for a manageable operator load [25].
+- **A stated false-alarm budget.** Detector thresholds are calibrated with conformal prediction, which gives distribution-free bounds on the false-alarm rate [18]. The RTOC sets the budget, and StrataSense keeps alarm rates inside ISA-18.2 guidance for a manageable operator load [25].
 - **Physics-residual detectors.** Expected hookload, torque, standpipe pressure and ECD come from hydraulics and torque-and-drag models of the kind in NORCE's OpenLab simulator [19]. Alerts fire on the *residual* between measured and expected values, which is more robust than rolling baselines.
 - **Explained, including the unexpected.** Each alert names the channels and offsets that drove it. For patterns no detector was built for, an explanation layer summarises what changed in plain language, following recent work on explainable open-world anomaly detection in oil wells [17].
 - **Corroboration.** A symptom inside a formation-aligned look-ahead zone escalates; a symptom alone stays advisory. This is already in the prototype ([SOLUTION §3.5](SOLUTION.md#35-alert-fusion-anti-alarm-fatigue)).
 - **Procedure-linked well-control alerts.** Kick and overpressure alerts carry the relevant response checklist from OIL's well-control procedures under the statutory OISD-STD-174 standard [15], so the alert tells the crew what to do, not only what is happening.
-- **Lightweight models first.** A 2026 cost-aware study found that classical methods often match time-series foundation models per unit of compute in industrial monitoring [16]. NWIS uses small, explainable models by default and adopts heavier ones only when measured to be better on OIL data.
+- **Lightweight models first.** A 2026 cost-aware study found that classical methods often match time-series foundation models per unit of compute in industrial monitoring [16]. StrataSense uses small, explainable models by default and adopts heavier ones only when measured to be better on OIL data.
 
 ### D. Causal "what worked"
 - **Beyond raw cure rates.** Today's ranking uses cure rate, first-try success and NPT. At the end state, mitigation effects are adjusted for confounders such as loss severity, formation and mud system, so a treatment that is only used on the worst losses is not unfairly penalised.
@@ -68,18 +68,18 @@ Each pillar lists what it is, why it matters, and the evidence behind it.
 - **Why it matters.** Engineers already know the list of possible actions. What they lack is evidence of which action worked *in this formation, in this field*. The prototype already shows the effect on synthetic data: fine LCM fails in fractured Sylhet while cement plugs work ([SOLUTION §3.6](SOLUTION.md#36-what-worked-recommendations-and-analog-replay)).
 
 ### E. Grounded assistant
-- **Tool-using, not free-writing.** A local LLM orchestrates NWIS's own tools (search, statistics, risk, mud-weight window, analogs). TADI (2026) found that domain-specific tool design, not model size, drove answer quality in drilling analytics [6].
+- **Tool-using, not free-writing.** A local LLM orchestrates StrataSense's own tools (search, statistics, risk, mud-weight window, analogs). TADI (2026) found that domain-specific tool design, not model size, drove answer quality in drilling analytics [6].
 - **Cite or drop.** Every sentence must carry a citation to a report page or data record, or it is removed. This citation guard already exists in the prototype.
-- **Abstain when thin.** When fewer than a set number of offsets support an answer, NWIS says so instead of guessing.
+- **Abstain when thin.** When fewer than a set number of offsets support an answer, StrataSense says so instead of guessing.
 - **Shift handover brief.** Each shift ends with an automatic, cited summary: depth drilled, events, open alerts, what is coming in the next 150 m.
 - **Measured.** Groundedness is scored on a fixed question set, in the spirit of TADI's Evidence Grounding Score [6], and reported in the Analytics view.
 
 ### F. Planning and execution as one contract
-- The pre-spud **Offset Hazard Brief** becomes the live **watch-list** for that well. If the well departs from the plan (mud weight below the offset-derived kick bound, casing point moved, a formation top far off prognosis), NWIS flags the deviation.
+- The pre-spud **Offset Hazard Brief** becomes the live **watch-list** for that well. If the well departs from the plan (mud weight below the offset-derived kick bound, casing point moved, a formation top far off prognosis), StrataSense flags the deviation.
 - **Why it matters.** Expert and NGT panels on the Baghjan-5 blowout cited a "mismatch between planning and execution" [R-8][R-9].
 
 ### G. Decision black box
-- An append-only, time-stamped log of every alert NWIS raised, the evidence shown, who acknowledged it, what action was recorded and what happened next.
+- An append-only, time-stamped log of every alert StrataSense raised, the evidence shown, who acknowledged it, what action was recorded and what happened next.
 - **Why it matters.** After an incident, investigators ask whether early signs were visible and acted on. A decision log answers that objectively, supports OISD audits, and gives the feedback data needed to improve the detectors.
 
 ## 5. Built for OIL's reality
@@ -114,7 +114,7 @@ Each pillar lists what it is, why it matters, and the evidence behind it.
 
 "Not published" means we could not find public evidence either way.
 
-| Capability | SLB Tela / DrillOps | DrillEdge | Exebenus | DeepIQ | OffsetEye | **NWIS end state** |
+| Capability | SLB Tela / DrillOps | DrillEdge | Exebenus | DeepIQ | OffsetEye | **StrataSense end state** |
 |---|---|---|---|---|---|---|
 | Offsets projected **by formation** with top uncertainty | Not published | No | No | Not published | Rule-based only | **Yes** |
 | Legacy **scanned** DDR/WCR plus expert voice notes | Unstructured data: yes. Voice: not published | No | No | Documents: yes | OCR: yes | **Yes, both** |
@@ -138,7 +138,7 @@ All numbers below are **targets** for the pilot and full deployment. They are no
 
 | Metric | How it is measured | Today (synthetic prototype) | Pilot target | Full-scale target |
 |---|---|---|---|---|
-| Time to find an offset lesson | Timed task with RTOC engineers, NWIS vs manual search | Manual search takes hours to days (PS statement) | < 2 min | < 30 s |
+| Time to find an offset lesson | Timed task with RTOC engineers, StrataSense vs manual search | Manual search takes hours to days (PS statement) | < 2 min | < 30 s |
 | Look-ahead coverage | Share of hazard events in pilot wells preceded by an offset-derived warning ≥ 100 m ahead | 3 of 4 replayed hazards | ≥ 60% | ≥ 75% |
 | Kick detection lead time | Detector vs conventional pit-volume alarm, on replayed and live data | Overpressure warning ~50 m before the kick | ≥ 5 min earlier | ≥ 10 min earlier, in line with literature [R-31] |
 | Alert usefulness | Share of alerts marked "useful" by engineers | Feedback loop built | ≥ 60% | ≥ 75% |
@@ -147,7 +147,7 @@ All numbers below are **targets** for the pilot and full deployment. They are no
 | Risk model skill | Leave-wells-out ROC-AUC vs "nearest offset well" baseline | 0.89 vs 0.59 (synthetic) | Beat the baseline by ≥ 0.15 | Same, per field |
 | Grounding | Share of assistant sentences with a valid citation | Citation guard built | 100% | 100% |
 | Hazard-related NPT | NPT hours for losses, kicks, stuck pipe and cementing vs a 3-year field baseline | Not measurable on synthetic data | −10% | −15 to −20% |
-| Adoption | Share of RTOC shifts that use NWIS each week | n/a | ≥ 70% | ≥ 90% |
+| Adoption | Share of RTOC shifts that use StrataSense each week | n/a | ≥ 70% | ≥ 90% |
 
 **Why NPT is the headline value metric.** NPT commonly makes up 20–30% of conventional drilling time, stuck pipe alone accounts for over a quarter of NPT [23], and lost circulation can cost 10–20% of overall drilling cost [24]. Even a small reduction in hazard-related NPT repays the system many times over. The value calculator in the Analytics view makes the assumptions explicit for OIL to set.
 
@@ -155,7 +155,7 @@ All numbers below are **targets** for the pilot and full deployment. They are no
 
 | Stage | Scope | Exit criteria |
 |---|---|---|
-| **0. SIH prototype** (done) | Synthetic Upper-Assam dataset, seven views, role-based sign-in, 69 tests, plus a real public-data mode on Norwegian North Sea records (Sodir). First versions of pillars A–G are built: memos, reviews, handover, DTW QC, physics baselines, alarm budget, what-if, case-mix ranking and the decision log. See [`SOLUTION.md`](SOLUTION.md) | Mechanisms demonstrated and measured on known ground truth |
+| **0. SIH prototype** (done) | Synthetic Upper-Assam dataset, eight views, role-based sign-in, 87 tests, plus a real public-data mode on Norwegian North Sea records (Sodir, 173 wells) that admins switch to from the header, and an importer for Equinor's real Volve rig logs as its Live Ops stream. First versions of pillars A–G are built: memos, reviews, handover, DTW QC, physics baselines, alarm budget, what-if, case-mix ranking and the decision log. See [`SOLUTION.md`](SOLUTION.md) | Mechanisms demonstrated and measured on known ground truth |
 | **1. Archive pilot** | One field, 3–5 years of DDR/WCR plus master data. Local labelling of about 100 report-days, following the non-transfer finding in [7] | Extraction F1 ≥ 0.85 on OIL data. Risk AUC beats the nearest-offset baseline. Planners confirm hazard briefs match their experience |
 | **2. Shadow mode** | Live beside eRTMAC on the 4 e-RTMAC rigs [1]. Alerts go to the RTOC only, not the rig. Decision black box on | Look-ahead coverage ≥ 60%. Alert load within budget. Enough labelled feedback to calibrate detectors |
 | **3. Advisory mode** | All Assam and Arunachal rigs. Rig-site tablet view. Voice capture and after-action reviews live | Alert usefulness ≥ 60%. Measurable fall in hazard-related NPT in pilot fields |
@@ -165,18 +165,18 @@ All numbers below are **targets** for the pilot and full deployment. They are no
 
 | Risk | Mitigation |
 |---|---|
-| Access to OIL archives and master data is slow | Start with one field. The pipeline already runs on public Volve WITSML reports and Sodir North Sea well records, so integration work can start before access is granted. |
+| Access to OIL archives and master data is slow | Start with one field. The pipeline already runs on Sodir North Sea well records, and it has importers for Equinor Volve WITSML daily reports and real-time logs (tested on Volve-format samples), so integration work can start before access is granted. |
 | OCR quality on old scans | Cross-document consolidation, confidence scores and a human review queue. DDRs usually repeat what the WCR says. |
 | Models trained on synthetic data do not transfer | Expected, not a surprise [7]. Budget for local labelling. Report metrics per field. |
 | Alarm fatigue | False-alarm budget, fusion, cool-downs and escalation only on corroboration. Alerts are reviewed in shadow mode before they reach the rig. |
-| Over-trust in automation | NWIS advises and never controls the rig. Every alert shows its evidence and its uncertainty, and thin evidence looks thin. |
+| Over-trust in automation | StrataSense advises and never controls the rig. Every alert shows its evidence and its uncertainty, and thin evidence looks thin. |
 | LLM hallucination | The LLM is optional. It only rephrases retrieved facts, and uncited sentences are dropped. The core runs without any LLM. |
 | Change management | Built with RTOC engineers in shadow mode. Senior engineers are credited as authors of their expert memos. |
 
 ## 10. Non-goals
 
-- **No autonomous control** of the rig or the drilling parameters. NWIS is decision support.
-- **No replacement** of eRTMAC, the mud-logging unit or OIL's existing databases. NWIS reads from them.
+- **No autonomous control** of the rig or the drilling parameters. StrataSense is decision support.
+- **No replacement** of eRTMAC, the mud-logging unit or OIL's existing databases. StrataSense reads from them.
 - **No cloud dependency** and no data leaving OIL's network.
 - **No field-accuracy claims** until they have been measured on OIL's own data in Stage 1.
 
@@ -191,7 +191,7 @@ All numbers below are **targets** for the pilot and full deployment. They are no
 5. Drilling Contractor — Generative and agentic AI solutions unlock new insights for drilling (SLB Tela, DeepIQ, Kwantis ID3). https://drillingcontractor.org/generative-and-agentic-ai-solutions-unlock-new-insights-for-drilling-78837
 6. TADI: Tool-Augmented Drilling Intelligence via Agentic LLM Orchestration over Heterogeneous Wellsite Data, arXiv 2605.00060 (2026). https://arxiv.org/abs/2605.00060
 7. DrillScribe — DDR-to-NPT ledger and cross-operator transfer study. https://github.com/chinmoypaul8897/drillscribe
-8. OffsetEye (eRTMAC-NWIS, another SIH team). https://github.com/bishopcommander/OffsetEye
+8. OffsetEye (another SIH team). https://github.com/bishopcommander/OffsetEye
 9. Exebenus — Predictive AI for drilling operations. https://www.exebenus.com/
 10. Corva — Predictive Drilling. https://www.corva.ai/energy/predictive-drilling
 11. Halliburton — LOGIX automation and remote operations. https://www.halliburton.com/en/well-construction/automation-and-remote-operations

@@ -69,7 +69,7 @@ export default function LiveOps() {
     <div className="seg" role="group" aria-label="Replay speed">
       {[1, 4, 10, 25].map((s) => <button key={s} className={live.speed === s ? "on" : ""} onClick={() => send({ cmd: "speed", value: s })}>{s}×</button>)}
     </div>
-    <span className="small muted">Jump to:</span>
+    {live.episodes.length > 0 && <span className="small muted">Jump to:</span>}
     {live.episodes.map((e) => <button key={e.id} className={`btn sm ${st?.episode === e.id ? "primary" : ""}`} title={e.label}
       onClick={() => { setSel(null); send({ cmd: "jump", episode: e.id }); }}>
       <span className="swatch" style={{ background: HAZARD_COLOR[e.hazard] }} /> {e.id} · {HAZARD_SHORT[e.hazard] ?? e.hazard}{episodePlace(e.label)}</button>)}
@@ -121,6 +121,9 @@ export default function LiveOps() {
       <div>
         <h2 className="view">Live Ops — {meta.active_well} (active well)</h2>
         <div className="small muted">{isLive ? `Live rig feed (${stream?.describe ?? meta.stream?.describe}), shared by every console` : "eRTMAC stream replay"} · detectors + formation-aligned offset look-ahead + mud window, fused into one alert feed</div>
+        {!isLive && meta.stream_source && <div className="small ink2" title={`Logs: ${meta.stream_source.logs.join(", ")}. Derived by StrataSense: ${meta.stream_source.derived.join(", ")}.`}>
+          Real rig data: {meta.stream_source.wellbore}, {meta.stream_source.window.start.slice(0, 16).replace("T", " ")} UTC, {meta.stream_source.window.hours} h,
+          bit {Math.round(meta.stream_source.window.md_from)}–{Math.round(meta.stream_source.window.md_to)} m MD · <a href={meta.stream_source.url} target="_blank" rel="noreferrer">{meta.stream_source.attribution}</a></div>}
       </div>
       {controls}
     </div>
@@ -142,7 +145,7 @@ export default function LiveOps() {
           <div className="d num">{st.zones_ahead[0].distance_m! > 0 ? `in ${fmt.m(st.zones_ahead[0].distance_m)}` : "bit inside zone"} · {st.zones_ahead[0].n_events}/{st.zones_ahead[0].n_exposed} offsets</div></> : <div className="v">none</div>}</div>
       {isLive && stream ? <div className="kpi"><div className="k">Rig feed ({stream.kind === "wits0" ? "WITS-0" : "WITSML"})</div>
           <div className="v num" style={{ fontSize: 17 }}>{stream.packets.toLocaleString("en-IN")} packets</div>
-          <div className="d" title={`derived by NWIS (not sent by the rig): ${stream.derived.join(", ")}`}>
+          <div className="d" title={`derived by StrataSense (not sent by the rig): ${stream.derived.join(", ")}`}>
             {stream.connected ? `from ${stream.peer}` : "not connected"} · {stream.errors} bad lines · derived: {stream.derived.join(", ") || "none"}</div></div>
         : <div className="kpi"><div className="k">Replay progress</div><div className="v num">{Math.round(st.progress * 100)}%</div>
         <div className="progress"><div style={{ width: `${st.progress * 100}%` }} /></div><div className="d num">t+{fmt.hours(st.t)}</div></div>}

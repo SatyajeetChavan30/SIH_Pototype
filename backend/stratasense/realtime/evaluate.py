@@ -2,7 +2,9 @@
 
 Hidden episode truth is used *only* here, to score the replay after the fact; the live engine never sees it.
 An alert counts as a detection when it matches the episode's hazard between (onset - 120 m) and (event + 60 m),
-the same rule as tests/test_system.py. Every other real-time or fused alert counts as a false alarm.
+the same rule as tests/test_system.py. Real incidents from daily drilling reports (Volve) carry a time instead,
+because real bit depth goes up and down: there the window is (start - 30 min) to (end + 10 min).
+Every other real-time or fused alert counts as a false alarm.
 """
 from __future__ import annotations
 
@@ -12,6 +14,15 @@ from ..kb import KnowledgeBase
 from .engine import LiveSession
 
 BUDGETS = (0.5, 1.0, 2.0, 4.0)
+
+
+def near(ep: dict, a: dict, related: bool = False) -> bool:
+    """Is alert `a` within an episode's scoring window (wider when only counting related alerts)?"""
+    if ep.get("t") is not None:
+        pad = 600.0 if related else 0.0
+        return ep["t"] - 1800.0 - pad <= a["t"] <= ep.get("t_end", ep["t"]) + 600.0 + pad
+    pad = 40.0 if related else 0.0
+    return ep.get("onset_md", ep["md"]) - 120 - pad <= a["md"] <= ep["md"] + 60 + pad
 
 
 def add_nuisance(data: dict, level: float, seed: int = 26121) -> dict:
@@ -67,13 +78,14 @@ def replay(kb: KnowledgeBase, model=None, budget: float | None = 2.0, nuisance: 
     matched: set[str] = set()
     episodes = []
     for ep in s.episodes:
-        lo, hi = ep.get("onset_md", ep["md"]) - 120, ep["md"] + 60
-        hits = sorted([a for a in alerts if a["hazard"] == ep["hazard"] and lo <= a["md"] <= hi], key=lambda a: a["t"])
-        matched |= {a["id"] for a in alerts if lo - 40 <= a["md"] <= hi + 40}   # related alerts around an episode
+        hits = sorted([a for a in alerts if a["hazard"] == ep["hazard"] and near(ep, a)], key=lambda a: a["t"])
+        matched |= {a["id"] for a in alerts if near(ep, a, related=True)}   # related alerts around an episode
         first = hits[0] if hits else None
         episodes.append({"id": ep["id"], "hazard": ep["hazard"], "label": ep.get("label"), "detected": bool(hits),
                          "first_alert_md": first["md"] if first else None,
                          "metres_before_event": round(ep["md"] - first["md"], 1) if first else None,
+                         "minutes_before_event": round((ep["t"] - first["t"]) / 60, 1)
+                         if first and ep.get("t") is not None else None,
                          "corroborated": any(a["corroborated"] for a in hits)})
     false = [a for a in alerts if a["id"] not in matched]
     return {"budget_per_hour": budget, "gated": budget is not None, "nuisance": nuisance, "hours": round(hours, 1),
@@ -98,9 +110,8 @@ def top_pick_eval(kb: KnowledgeBase, model=None) -> dict:
             if r["done"]:
                 break
         picks = s.dtw_picks if mode == "dtw" else [{"formation": c, "tvd": v} for c, v in s.picked.items()]
-        detected = sum(1 for ep in s.episodes if any(
-            a["hazard"] == ep["hazard"] and ep.get("onset_md", ep["md"]) - 120 <= a["md"] <= ep["md"] + 60
-            for a in opened.values()))
+        detected = sum(1 for ep in s.episodes if any(a["hazard"] == ep["hazard"] and near(ep, a)
+                                                     for a in opened.values()))
         out[mode] = {**pick_errors(picks, truth), "picks": picks, "episodes_detected": detected,
                      "n_episodes": len(s.episodes)}
     return out
@@ -117,7 +128,9 @@ def budget_sweep(kb: KnowledgeBase, model=None, nuisance_levels: tuple[float, ..
 def evaluate_live(kb: KnowledgeBase, model=None) -> dict:
     """Everything the Analytics view shows about live alerting; stored in kv 'live_eval'."""
     import datetime as dt
-    res = {"budget": budget_sweep(kb, model), "top_picks": top_pick_eval(kb, model),
+    # top picking is scored against hidden truth tops, which only the synthetic stream has
+    has_truth = bool(kb.db.kv_get("active_truth_tops"))
+    res = {"budget": budget_sweep(kb, model), "top_picks": top_pick_eval(kb, model) if has_truth else None,
            "computed": dt.datetime.now().isoformat(timespec="seconds")}
     kb.db.kv_set("live_eval", res)
     return res

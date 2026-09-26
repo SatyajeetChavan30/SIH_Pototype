@@ -4,8 +4,8 @@ DTW alignment and the what-if plan copy."""
 import numpy as np
 import pytest
 
-from nwis import audit
-from nwis.db import DB
+from stratasense import audit
+from stratasense.db import DB
 
 
 @pytest.fixture()
@@ -31,7 +31,7 @@ def test_decision_log_chain_detects_tampering(db):
 
 
 def test_conformal_gate_bounds_false_alarms_on_normal_data():
-    from nwis.realtime.calibrate import HINDSIGHT, OnlineConformal
+    from stratasense.realtime.calibrate import HINDSIGHT, OnlineConformal
     rng = np.random.default_rng(0)
     oc = OnlineConformal(budget_per_hour=1.0)
     det = "stuck-pipe-index"
@@ -53,7 +53,7 @@ def test_conformal_gate_bounds_false_alarms_on_normal_data():
 
 
 def test_conformal_gate_respects_console_budget():
-    from nwis.realtime.calibrate import OnlineConformal
+    from stratasense.realtime.calibrate import OnlineConformal
     oc = OnlineConformal(budget_per_hour=1.0)
     oc.update({"torque-spike": 1.0})
     allow, _, why = oc.gate("torque-spike", "warning", opened_last_hour=3)
@@ -62,7 +62,7 @@ def test_conformal_gate_respects_console_budget():
 
 
 def test_severity_adjustment_removes_case_mix_bias():
-    from nwis.risk.recommend import adjusted_efficacy, efficacy
+    from stratasense.risk.recommend import adjusted_efficacy, efficacy
     ev = []
     # PLUG is used on total losses (hard), LCM on seepage (easy). Within each severity both cure equally often.
     for i in range(10):
@@ -85,7 +85,7 @@ def test_severity_adjustment_removes_case_mix_bias():
 
 
 def test_physics_baseline_tracks_depth_and_mud_weight():
-    from nwis.realtime.physics import PhysicsBaseline
+    from stratasense.realtime.physics import PhysicsBaseline
     pb = PhysicsBaseline()
     rng = np.random.default_rng(1)
 
@@ -106,7 +106,7 @@ def test_physics_baseline_tracks_depth_and_mud_weight():
 
 
 def test_subsequence_dtw_finds_shifted_boundary():
-    from nwis.realtime.toppick import subsequence_dtw
+    from stratasense.realtime.toppick import subsequence_dtw
     rng = np.random.default_rng(2)
     template = np.r_[np.full(30, 100.0), np.full(15, 50.0)] + rng.normal(0, 3, 45)
     series = np.r_[np.full(70, 100.0), np.full(40, 50.0)] + rng.normal(0, 3, 110)
@@ -115,9 +115,9 @@ def test_subsequence_dtw_finds_shifted_boundary():
 
 
 def test_whatif_never_mutates_the_source_plan():
-    from nwis.geo import Trajectory
-    from nwis.correlation import Target
-    from nwis.risk.whatif import apply_overrides
+    from stratasense.geo import Trajectory
+    from stratasense.correlation import Target
+    from stratasense.risk.whatif import apply_overrides
     secs = [{"idx": 0, "hole": "17-1/2\"", "top_md": 0.0, "shoe_md": 1000.0, "mw_ppg": 9.0, "ecd_ppg": 9.3},
             {"idx": 1, "hole": "12-1/4\"", "top_md": 1000.0, "shoe_md": 3000.0, "mw_ppg": 10.0, "ecd_ppg": 10.4}]
     t = Target(None, "t", 27.0, 95.0, Trajectory([0, 3000], [0, 0], [0, 0]), secs, 2026, None, 3000.0)

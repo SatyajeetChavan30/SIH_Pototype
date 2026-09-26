@@ -104,7 +104,10 @@ REGIONS = {
         "label": "Norwegian North Sea (real public data, Sodir)", "formations": NORWAY_FORMATIONS, "default_td": "VESTLAND",
         "synthetic": False,
         "data_notice": "Real public wellbore data from the Norwegian Offshore Directorate FactPages, used under the Norwegian "
-                       "licence for Open Government data (NLOD). North Sea geology, not Assam: this checks StrataSense on real records.",
+                       "licence for Open Government data (NLOD). North Sea geology, not Assam: this checks StrataSense on real records. "
+                       "Live Ops, when a Volve stream is imported: real-time drilling data from the Volve field, © Equinor and "
+                       "the former Volve licence partners (ExxonMobil Exploration and Production Norway AS, Bayerngas Norge AS), "
+                       "Equinor Open Data Licence.",
         "ui": {"search_examples": ["gas kick in Rogaland", "lost circulation in the Shetland chalk", "stuck pipe in Hordaland",
                                    "shallow gas in Nordland", "fishing and sidetrack", "losses within 10 km after 2000"],
                "ask_examples": ["What happened with kicks in Rogaland?", "What worked for losses in the chalk?",

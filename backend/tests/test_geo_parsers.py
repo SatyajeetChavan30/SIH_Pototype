@@ -4,10 +4,10 @@ from pathlib import Path
 
 import numpy as np
 
-from nwis.geo import Trajectory, haversine_km, minimum_curvature
-from nwis.ingest.pipeline import extract_document
-from nwis.ingest.wits0 import parse_packets, to_packet
-from nwis.ingest.witsml import load_witsml_pages
+from stratasense.geo import Trajectory, haversine_km, minimum_curvature
+from stratasense.ingest.pipeline import extract_document
+from stratasense.ingest.wits0 import parse_packets, to_packet
+from stratasense.ingest.witsml import load_witsml_pages
 
 FIX = Path(__file__).parent / "fixtures"
 

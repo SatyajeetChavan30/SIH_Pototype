@@ -1,6 +1,6 @@
 {
-  "name": "eRTMAC-NWIS Rig Site",
-  "short_name": "NWIS Rig",
+  "name": "StrataSense Rig Site",
+  "short_name": "StrataSense Rig",
   "description": "Nearby Wells Intelligence at the rig site: offset-well look-ahead, alerts and what worked, usable when the VSAT link drops.",
   "start_url": "/#/rig",
   "scope": "/",

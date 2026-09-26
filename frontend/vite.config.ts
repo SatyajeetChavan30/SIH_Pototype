@@ -4,7 +4,7 @@ import react from "@vitejs/plugin-react";
 /** Writes /precache.json: the app-shell file list the service worker caches for offline rig-site use. */
 function precacheManifest(): Plugin {
   return {
-    name: "nwis-precache",
+    name: "stratasense-precache",
     apply: "build",
     generateBundle(_opts, bundle) {
       const built = Object.keys(bundle).filter((f) => !f.endsWith(".map")).map((f) => `/${f}`);

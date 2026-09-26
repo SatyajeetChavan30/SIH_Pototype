@@ -8,7 +8,7 @@ const EVENT_LABEL: Record<string, string> = {
   feedback: "feedback", held_in_digest: "held in digest (alarm budget)",
 };
 
-/** Tamper-evident decision log for one alert: what NWIS showed, when, who acted and what they said. */
+/** Tamper-evident decision log for one alert: what StrataSense showed, when, who acted and what they said. */
 export default function DecisionTrail({ alertId, alertKey, refresh }: { alertId: string; alertKey: string; refresh: string }) {
   const [rows, setRows] = useState<AuditRow[] | null>(null);
   useEffect(() => {

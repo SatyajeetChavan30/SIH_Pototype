@@ -1,5 +1,5 @@
 /** Fired when the server says the session is missing or expired; the auth gate then shows the sign-in screen. */
-export const SIGNED_OUT_EVENT = "nwis:signed-out";
+export const SIGNED_OUT_EVENT = "stratasense:signed-out";
 
 export async function api<T = any>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(path, init);

@@ -1,7 +1,7 @@
 """Unit tests for the drilling NLP layer (no database needed)."""
-from nwis.ingest.nlp import (analyse_sentence, find_mitigations, find_outcome, is_hypothetical, ocr_fix_numbers,
+from stratasense.ingest.nlp import (analyse_sentence, find_mitigations, find_outcome, is_hypothetical, ocr_fix_numbers,
                              parse_depths, parse_mw, parse_rate, parse_volume, repair_ocr_spacing, split_sentences)
-from nwis.search.query import parse_query
+from stratasense.search.query import parse_query
 
 
 def test_depth_units_and_md_tvd():

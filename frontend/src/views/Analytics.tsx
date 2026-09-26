@@ -23,7 +23,7 @@ function HBar({ rows, max, fmtV, height = 22 }: { rows: { label: string; value: 
 }
 
 const METHOD_LABEL: Record<string, string> = {
-  nearest_offset: "Nearest offset well", base_rate: "Formation base rate", offset_evidence: "Offset evidence (Bayes)", ml: "ML model (HistGB)", blend: "NWIS blend (per-hazard CV)",
+  nearest_offset: "Nearest offset well", base_rate: "Formation base rate", offset_evidence: "Offset evidence (Bayes)", ml: "ML model (HistGB)", blend: "StrataSense blend (per-hazard CV)",
 };
 
 export default function Analytics() {
@@ -46,7 +46,7 @@ export default function Analytics() {
   return <div className="col">
     <div>
       <h2 className="view">Analytics &amp; model evidence</h2>
-      <p className="lede">How much knowledge NWIS holds, where NPT comes from, and how well each model does. {meta.synthetic ? "All metrics are on the synthetic Upper-Assam dataset: they validate the pipeline mechanics and must be re-measured on OIL's own reports." : `Metrics on real public data: ${meta.ontology.region?.label}. Incidents come from wellbore history summaries, so they are under-reported compared with daily drilling reports.`}</p>
+      <p className="lede">How much knowledge StrataSense holds, where NPT comes from, and how well each model does. {meta.synthetic ? "All metrics are on the synthetic Upper-Assam dataset: they validate the pipeline mechanics and must be re-measured on OIL's own reports." : `Metrics on real public data: ${meta.ontology.region?.label}. Incidents come from wellbore history summaries, so they are under-reported compared with daily drilling reports.`}</p>
     </div>
     <JobsCard onFinished={reload} />
     <div className="kpis">
@@ -119,7 +119,8 @@ export default function Analytics() {
         </>}
       </div>
     </div>
-    {d.live_eval ? <LiveEval ev={d.live_eval} onUpdated={reload} /> : meta.synthetic && <RerunLive onUpdated={reload} />}
+    {d.live_eval ? <LiveEval ev={d.live_eval} onUpdated={reload} />
+      : (meta.synthetic || (meta.stream_source?.incidents ?? 0) > 0) && <RerunLive onUpdated={reload} />}
     <PublicEval ev={d.public_eval} onUpdated={reload} />
     <div className="grid2">
       <div className="card">
@@ -147,14 +148,15 @@ export default function Analytics() {
 
 /** Replay evidence for the live alerting: alarm budget trade-off and automatic top picking. */
 function LiveEval({ ev, onUpdated }: { ev: any; onUpdated: () => void }) {
-  const { fmName } = useApp();
+  const { fmName, meta } = useApp();
+  const real = meta.stream_source;
   const rows: any[] = ev.budget.rows;
   const stress = rows.filter((r) => r.nuisance > 0);
   const nEp = ev.budget.n_episodes;
-  const dtw = ev.top_picks.dtw, ml = ev.top_picks.mudlogger;
+  const dtw = ev.top_picks?.dtw, ml = ev.top_picks?.mudlogger;
   return <div className="grid2">
     <div className="card">
-      <h3>Alarm budget <span className="sub">replay of the active well · {rows[0]?.hours} h of drilling{ev.computed ? ` · computed ${ev.computed.replace("T", " ")}` : ""}</span></h3>
+      <h3>Alarm budget <span className="sub">{real ? `real ${real.source} stream (${real.wellbore}) vs the operator's coded incidents` : "replay of the active well"} · {rows[0]?.hours} h of drilling{ev.computed ? ` · computed ${ev.computed.replace("T", " ")}` : ""}</span></h3>
       <RerunLive onUpdated={onUpdated} inline />
       <HBar fmtV={(v) => String(v)} rows={stress.map((r) => ({
         label: r.gated ? `budget ${r.budget_per_hour}/h` : "no budget (all alerts)", value: r.false_alarms,
@@ -167,7 +169,7 @@ function LiveEval({ ev, onUpdated }: { ev: any; onUpdated: () => void }) {
           <td className="num">{r.detected}/{nEp}</td><td className="num">{r.false_alarms}</td><td className="num">{r.false_per_hour}</td></tr>)}</tbody></table>
       <div className="small muted" style={{ marginTop: 6 }}>Critical alerts and alerts corroborated by an offset look-ahead zone always show; over budget, weaker signals are held in a visible digest. Remaining false alarms are mostly critical-level pit-transfer "losses": the budget never hides a critical signal.</div>
     </div>
-    <div className="card">
+    {dtw && <div className="card">
       <h3>Automatic top picking <span className="sub">GR correlation (DTW) vs hidden truth</span></h3>
       <div className="row wrap" style={{ gap: 12 }}>
         <div className="kpi" style={{ flex: 1 }}><div className="k">DTW only: median |error|</div>
@@ -179,21 +181,22 @@ function LiveEval({ ev, onUpdated }: { ev: any; onUpdated: () => void }) {
           <td className="num" style={{ color: Math.abs(v) > 15 ? "var(--bad-ink)" : undefined }}>{v > 0 ? "+" : ""}{v} m</td>
           <td className="num">{ml.per_formation[c] != null ? `${ml.per_formation[c]} m` : "–"}</td></tr>)}</tbody></table>
       <div className="small muted" style={{ marginTop: 6 }}>Default mode keeps the mud-logger pick in charge and runs DTW as an independent QC that flags disagreements. Large errors (red) come from sand streaks inside clays; the synthetic mud-logger picks are near-perfect by construction.</div>
-    </div>
+    </div>}
   </div>;
 }
 
 /** Real-data check on the public Equinor Volve reports: zero-shot transfer and the local-adaptation curve. */
 function PublicEval({ ev, onUpdated }: { ev: any; onUpdated: () => void }) {
+  const { meta } = useApp();
   if (!ev) return <div className="card">
     <h3>Real-data check: Equinor Volve (public) <span className="sub">not run yet</span></h3>
-    <div className="small">Everything above uses synthetic Assam data. To score NWIS on real drilling text:</div>
+    <div className="small">{meta.synthetic ? "Everything above uses synthetic Assam data. " : ""}To score StrataSense's report reading on real drilling text:</div>
     <ol className="small" style={{ margin: "6px 0 0 18px", padding: 0, lineHeight: 1.6 }}>
       <li>Download the Volve daily drilling report XML from Equinor's Volve data-sharing page (you accept the Equinor Open Data Licence there).</li>
       <li>Upload the XML files (or the folder, or a .zip of it) below. Scoring runs on this server and the results appear here.</li>
     </ol>
     <VolveUpload onUpdated={onUpdated} />
-    <div className="small muted" style={{ marginTop: 6 }}>NWIS reads only the free text; the operator's own activity codes are the labels, so results are agreement with operator coding.</div>
+    <div className="small muted" style={{ marginTop: 6 }}>StrataSense reads only the free text; the operator's own activity codes are the labels, so results are agreement with operator coding.</div>
   </div>;
   const z = ev.zero_shot;
   const curve: any[] = ev.adaptation ?? [];

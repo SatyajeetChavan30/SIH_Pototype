@@ -39,13 +39,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [cite, setCite] = useState<Citation | null>(null);
   const [lastIngest, setLastIngest] = useState<any | null>(null);
 
-  const loadMeta = () => api<Meta>("/api/meta").then((m) => { setMeta(m); try { localStorage.setItem("nwis.meta", JSON.stringify(m)); } catch { /* best-effort */ } });
+  const loadMeta = () => api<Meta>("/api/meta").then((m) => { setMeta(m); try { localStorage.setItem("stratasense.meta", JSON.stringify(m)); } catch { /* best-effort */ } });
   useEffect(() => {
     // cache /api/meta so the rig-site view still opens when the link to the server is down
     loadMeta()
       .catch((e) => {
         let cached: Meta | null = null;
-        try { cached = JSON.parse(localStorage.getItem("nwis.meta") || "null"); } catch { cached = null; }
+        try { cached = JSON.parse(localStorage.getItem("stratasense.meta") || "null"); } catch { cached = null; }
         if (cached) setMeta(cached); else setErr(String(e.message || e));
       });
     const f = () => setRoute(parseHash());
@@ -54,11 +54,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   if (err) return <div className="empty" style={{ padding: 40 }}>
-    <h2>NWIS server not reachable</h2><p>{err}</p>
+    <h2>StrataSense server not reachable</h2><p>{err}</p>
     <p className="muted">If the knowledge base is still being built, this page continues once it is ready.</p>
     <button className="btn" onClick={() => location.reload()}>Try again</button>
   </div>;
-  if (!meta) return <div className="empty" style={{ padding: 40 }}>Loading NWIS…</div>;
+  if (!meta) return <div className="empty" style={{ padding: 40 }}>Loading StrataSense…</div>;
 
   const fmMap = Object.fromEntries(meta.ontology.formations.map((f) => [f.code, f]));
   const hzMap = Object.fromEntries(meta.ontology.hazards.map((h) => [h.code, h]));

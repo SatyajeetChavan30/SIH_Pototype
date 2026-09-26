@@ -1,9 +1,9 @@
-# eRTMAC-NWIS: Solution Design
+# StrataSense: Solution Design
 
 **Nearby Wells Intelligence System: offset-well institutional memory that speaks up *before* the bit gets there.**
 SIH 2026 · Problem Statement 26121 · Oil India Limited · Smart Automation
 
-> **In one line:** NWIS reads every DDR, WCR and legacy scan, turns them into cited events, and projects the offset wells' problems onto the active well **by formation, not measured depth**. Engineers get a warning ~150 m ahead, with the source page, and a ranked list of what actually worked last time.
+> **In one line:** StrataSense reads every DDR, WCR and legacy scan, turns them into cited events, and projects the offset wells' problems onto the active well **by formation, not measured depth**. Engineers get a warning ~150 m ahead, with the source page, and a ranked list of what actually worked last time.
 
 See [`RESEARCH.md`](RESEARCH.md) for the market and literature analysis that drove these choices, and [`VISION.md`](VISION.md) for the end state this prototype is building towards.
 
@@ -11,7 +11,7 @@ See [`RESEARCH.md`](RESEARCH.md) for the market and literature analysis that dro
 
 ## 1. Who uses it, and for what
 
-| User | Question they have today | What NWIS gives them |
+| User | Question they have today | What StrataSense gives them |
 |---|---|---|
 | **RTOC / eRTMAC engineer** | "Is this flow-out drop the Tipam thief sand the offsets talked about?" | One fused alert feed: real-time detectors, formation-aligned offset look-ahead and mud-window checks. Each alert carries offset evidence, source pages and analogs. |
 | **Rig-site company man** | "What do I do *now*?" | Rig-site view: bit depth, formation, one big alert, and the top actions with their historical cure rate. |
@@ -27,6 +27,8 @@ flowchart LR
     B[WITSML drillReport XML<br/>e.g. Volve] --> I
     C[Master data<br/>tops, surveys, casing, mud] --> K
     D[eRTMAC stream<br/>WITS-0 / WITSML] --> R
+    P[Public stand-ins<br/>Sodir FactPages wells ·<br/>Equinor Volve real-time logs] --> K
+    P --> R
   end
   I[Ingestion<br/>PDF text + RapidOCR<br/>spacing repair, NLP,<br/>negation, units] --> K[(Knowledge base<br/>events · actions · outcomes<br/>citations · lessons)]
   I --> Q[Human review queue<br/>active learning]
@@ -98,7 +100,7 @@ Baselines are robust rolling medians. They reset after a mud-weight change or a 
 - **Mitigation ranking:** mitigations are ranked by *outcome*, not habit. The measures are Laplace-smoothed cure rate, first-try success and median NPT, over offset events in the same formation, widening to the basin when evidence is thin.
 - **What the data rediscovers:** fine LCM fails in fractured Sylhet (1/11) while cement plugs work (2/2). Sized CaCO₃ works in depleted Tipam.
 - **Case-mix adjustment:** raw cure rates are confounded, because cement plugs go on total losses and on cases where other treatments already failed. Each action is therefore ranked by an **indirectly standardised** cure rate: what it achieved compared with what an average treatment achieved on cases of the same severity and attempt order, shrunk toward the overall rate when attempts are few. Two lucky attempts cannot claim a 97% cure rate, and a ⚖ marks actions whose raw and adjusted rates differ a lot.
-- **Analog Replay:** a modern, fully automatic take on case-based reasoning. Every 30 m window of every offset log is a case. The live window is matched by kNN, and NWIS shows **what happened next** (≤60 m), with sources. The case index is cached on disk under a signature of every offset log and offset event, so the server starts without rebuilding it, and any new ingest invalidates it automatically.
+- **Analog Replay:** a modern, fully automatic take on case-based reasoning. Every 30 m window of every offset log is a case. The live window is matched by kNN, and StrataSense shows **what happened next** (≤60 m), with sources. The case index is cached on disk under a signature of every offset log and offset event, so the server starts without rebuilding it, and any new ingest invalidates it automatically.
 
 ### 3.7 Evidence-grounded document understanding
 - **Records and sentence roles:** reports are segmented into time-log records. Each sentence gets a role: *event, action, outcome, negated, hypothetical, lesson*.
@@ -107,20 +109,20 @@ Baselines are robust rolling medians. They reset after a mud-weight change or a 
 - **Units** are normalised: m/ft, ppg/SG/pcf, bbl/hr and m³/hr, klbs/t.
 - **Hazard classification** is an ensemble of a domain lexicon (specific terms win: "losses during cementing" is CEMENT, not LOSS) and a TF-IDF + logistic-regression sentence classifier.
 - **OCR path:** the page is cut into strips at blank rows and RapidOCR detects the text lines in each strip. Each line is then recognised on its own from a padded, upright crop, **without the angle classifier**: the classifier flipped long full-width report lines to 180° and they came back empty, and tight crops made the recogniser drop word spaces. After that come digit repair inside numbers ("3,21l m" → "3,211 m", "1,O45" → "1,045", never touching words) and domain word-segmentation for any spaces still missing. Section headings and report types are matched whitespace-tolerantly ("2.CASINGPOLICY").
-- **Scans stored before OCR was installed.** Without an OCR engine a scanned page is kept, flagged and left unread rather than rejected. Ingestion lists these documents, and one click (or `python -m nwis.cli reread-scans`) re-reads them through OCR once it is installed. `python -m nwis.cli evaluate-ocr` re-scores scan recall without a full rebuild.
+- **Scans stored before OCR was installed.** Without an OCR engine a scanned page is kept, flagged and left unread rather than rejected. Ingestion lists these documents, and one click (or `python -m stratasense.cli reread-scans`) re-reads them through OCR once it is installed. `python -m stratasense.cli evaluate-ocr` re-scores scan recall without a full rebuild.
 - **Casing-shoe depths:** a cementing sentence that names its string ("cementing of 9-5/8\" casing") is placed at that string's shoe from master data. On poor scans a lost bullet dash can merge two complications into one record, and this stops the cementing event from borrowing the other one's depth.
 - **Consolidation:** events are merged across days and documents, keeping all citations.
 - **Confidence:** confidence below 0.7 routes an event to the review queue. Approvals become new training sentences (active learning).
 
 ### 3.8 Query understanding without an LLM
-"losses in Tipam within 5 km after 2012" becomes the chips `[Lost circulation] [Tipam Sandstone] [within 5 km] [2012–…]`. Retrieval is hybrid BM25 with drilling synonyms plus LSA semantic search, fused with Reciprocal Rank Fusion. "Ask NWIS" returns statistics (k of n wells, depth range, NPT, what worked) and numbered citations.
+"losses in Tipam within 5 km after 2012" becomes the chips `[Lost circulation] [Tipam Sandstone] [within 5 km] [2012–…]`. Retrieval is hybrid BM25 with drilling synonyms plus LSA semantic search, fused with Reciprocal Rank Fusion. "Ask StrataSense" returns statistics (k of n wells, depth range, NPT, what worked) and numbered citations.
 
 ### 3.9 Planning ↔ execution in one model
-The Offset Hazard Brief uses the same zones, window and recommendations that arm the live alerts. It includes a **watch-list** of what NWIS will monitor for that well. This directly targets the "mismatch between planning and execution" cited after Baghjan-2020.
+The Offset Hazard Brief uses the same zones, window and recommendations that arm the live alerts. It includes a **watch-list** of what StrataSense will monitor for that well. This directly targets the "mismatch between planning and execution" cited after Baghjan-2020.
 
 ### 3.10 Built for OIL
 - On-prem and offline, with an offline basemap fallback.
-- WITS-0 parser and WITSML 1.4 drillReport importer (Volve-compatible).
+- WITS-0 parser, WITSML 1.4 drillReport importer (Volve-compatible) and a WITSML 1.4.1 time-log parser. The time-log parser drops declared null values (e.g. -999.25), resolves duplicate channel aliases in a fixed order, and converts SI units (kkgf, kN·m, kPa, L/min, m³, g/cm³) into the units the detectors use.
 - Integrates through a stream-source adapter next to eRTMAC; no rip-and-replace.
 - Separate rig-site and RTOC views.
 
@@ -135,7 +137,7 @@ The Offset Hazard Brief uses the same zones, window and recommendations that arm
 - **Method.** For the next formation, each nearby offset provides a template: its smoothed gamma-ray from 80 m above to 40 m below its top.
   - Open-begin/open-end dynamic time warping maps the offset's top onto the live GR log.
   - A pick needs at least 3 offsets to agree within 15 m, the pick must lie inside the ±2σ prognosis, and the GR must step across it the same way as in the offsets.
-- **Modes.** `NWIS_TOP_PICK=auto` (default) keeps the mud-logger pick in charge and runs DTW as an independent QC; a disagreement above 15 m raises a *correlation conflict* note. `dtw` re-anchors on DTW alone; `mudlogger` switches it off.
+- **Modes.** `STRATASENSE_TOP_PICK=auto` (default) keeps the mud-logger pick in charge and runs DTW as an independent QC; a disagreement above 15 m raises a *correlation conflict* note. `dtw` re-anchors on DTW alone; `mudlogger` switches it off.
 
 ### 3.13 Decision black box
 Every alert opening, escalation, acknowledgement (with the person's name), clearance, engineer verdict (useful, false alarm, or real but not actionable), digest hold and budget change goes to an append-only `decision_log`. Each row stores the SHA-256 of the previous hash plus its own content, so editing or deleting any past row breaks verification. The alert drawer shows the trail for that alert, and Analytics shows chain status. This answers the question every post-incident review asks: what did the console show, when, and who acted?
@@ -145,7 +147,7 @@ Planners edit mud weight, ECD or casing-shoe depth per section and the offset mo
 
 ### 3.15 Institutional memory: expert memos, after-action reviews, shift handover
 - **Expert memos.** Senior engineers type a memo or record it as a voice note in Assamese, Hindi or English.
-  - Voice is transcribed on-prem through the optional `nwis[asr]` extra, which uses faster-whisper.
+  - Voice is transcribed on-prem through the optional `stratasense[asr]` extra, which uses faster-whisper.
   - The memo runs through the same NLP and is credited to its author. **Everything from a memo goes to peer review** before it can influence alerts or rankings.
 - **After-action reviews.** Any event in Knowledge search can produce a cited review. It covers what happened, a timeline from the report pages, the actions and outcomes, what the case-mix-adjusted offset evidence says, and similar events. An engineer approves it into a first-class lesson.
 - **Shift handover.** One click in Live Ops produces a cited brief of the last 12 h:
@@ -156,14 +158,14 @@ Planners edit mud weight, ECD or casing-shoe depth per section and the offset mo
 - **Grounding.** Both documents are extractive. The optional on-prem LLM may only rephrase them under the citation guard.
 
 ### 3.16 Live rig-feed adapter (next to eRTMAC)
-- **Protocols.** `NWIS_STREAM` selects the feed:
-  - `wits0-listen:PORT`: NWIS listens and the rig or eRTMAC relay pushes WITS-0 over TCP.
-  - `wits0-connect:HOST:PORT`: NWIS connects to a serial-over-IP WITS box.
-  - `witsml:https://…`: NWIS polls a WITSML 1.4.1 store's time log with `WMLS_GetFromStore`.
+- **Protocols.** `STRATASENSE_STREAM` selects the feed:
+  - `wits0-listen:PORT`: StrataSense listens and the rig or eRTMAC relay pushes WITS-0 over TCP.
+  - `wits0-connect:HOST:PORT`: StrataSense connects to a serial-over-IP WITS box.
+  - `witsml:https://…`: StrataSense polls a WITSML 1.4.1 store's time log with `WMLS_GetFromStore`.
   - `replay` (default): the stored stream, as before.
 - **Robust decoding.** An incremental decoder reassembles packets split across TCP reads and skips garbage bytes and bad lines. Connections reconnect with exponential back-off, because VSAT links drop.
-- **Channel mapping.** WITS Record 01 codes are mapped directly. Gamma ray and ECD use configurable extension items (`NWIS_WITS_MAP`) to be confirmed with OIL's mud-logging vendor, and WITSML mnemonics are configurable too (`NWIS_WITSML_MAP`).
-- **Normalisation.** A real feed does not carry everything the replay has, so NWIS fills the gaps and says which channels it derived:
+- **Channel mapping.** WITS Record 01 codes are mapped directly. Gamma ray and ECD use configurable extension items (`STRATASENSE_WITS_MAP`) to be confirmed with OIL's mud-logging vendor, and WITSML mnemonics are configurable too (`STRATASENSE_WITSML_MAP`). WITSML curve units are converted into engine units, and samples equal to the log's declared null value are dropped.
+- **Normalisation.** A real feed does not carry everything the replay has, so StrataSense fills the gaps and says which channels it derived:
   - TVD comes from the planned trajectory.
   - Rig state is inferred from pumps and ROP.
   - The d-exponent is computed from ROP, RPM, WOB, bit size and MW.
@@ -172,12 +174,12 @@ Planners edit mud weight, ECD or casing-shoe depth per section and the offset mo
 - **One shared session.** Every console (RTOC wall, duty engineer, rig tablet) sees the same alerts, and an acknowledgement on one is visible on all. The topbar shows packet health.
 - **Choosing the feed.** An administrator picks the source in **System → Live rig feed** (WITS-0 listen or connect, or a WITSML store) and applies it without a restart; consoles on the old feed reconnect by themselves.
 - **Stream gaps.** A feed that goes quiet for longer than the configured stream-gap time (System → Settings) raises a *stream gap* banner and event: alerts are frozen at the last bit depth, not silently stale.
-- **Rig simulator.** **System → Rig simulator** (or `nwis.cli simulate-rig`) sends the stored well as real WITS-0 frames, from spud or from a chosen scenario, at a chosen speed. It sends only what a rig WITS box would send, never state, d-exponent or hidden formation.
+- **Rig simulator.** **System → Rig simulator** (or `stratasense.cli simulate-rig`) sends the stored well as real WITS-0 frames, from spud or from a chosen scenario (including the timed Volve scenarios V1, V2… on the North Sea stream), at a chosen speed. It sends only what a rig WITS box would send, never state, d-exponent or hidden formation.
 
 ### 3.17 Real-data check on public Equinor Volve reports
-- **How.** Upload the reports in **Analytics → Real-data check** (or run `nwis.cli validate-volve <folder>`) to score NWIS on the public Volve daily drilling reports (WITSML drillReport XML, 1,759 report-days).
-- **Scoring.** NWIS reads the **free text only**: operator codes and NPT tags are stripped, so the labels cannot leak. The operator's own activity codes are the labels, so results are **agreement with operator coding**, not hand-checked truth.
-- **Local adaptation.** The first result is zero-shot transfer from the synthetic-trained classifier. Then NWIS re-fits with k = 20, 60 and 140 labelled local report-days from *other* wells and re-scores held-out wells. This is the DrillScribe finding (see VISION.md) turned into a routine check.
+- **How.** Upload the reports in **Analytics → Real-data check** (or run `stratasense.cli validate-volve <folder>`) to score StrataSense on the public Volve daily drilling reports (WITSML drillReport XML, 1,759 report-days).
+- **Scoring.** StrataSense reads the **free text only**: operator codes and NPT tags are stripped, so the labels cannot leak. The operator's own activity codes are the labels, so results are **agreement with operator coding**, not hand-checked truth.
+- **Local adaptation.** The first result is zero-shot transfer from the synthetic-trained classifier. Then StrataSense re-fits with k = 20, 60 and 140 labelled local report-days from *other* wells and re-scores held-out wells. This is the DrillScribe finding (see VISION.md) turned into a routine check.
 - **Status.** Volve must be downloaded after accepting Equinor's licence, so real numbers appear in Analytics only after that run. The pipeline is tested on a synthetic Volve-format fixture.
 
 ### 3.18 Sign-in and roles
@@ -191,7 +193,7 @@ Planners edit mud weight, ECD or casing-shoe depth per section and the offset mo
 | **admin** | All of the above, plus user management and decision-log chain verification |
 
 - **Accountability.** The decision log records the **signed-in user** for acknowledgements, verdicts, memo authorship, review decisions and after-action approvals. It no longer trusts a name typed in the browser. Sign-ins and review decisions are logged too.
-- **Demo.** `build-demo` seeds `field`, `office` and `admin` (password `demo`), and the sign-in page offers them as one-click shortcuts. `NWIS_AUTH=off` turns sign-in off for development.
+- **Demo.** `build-demo` seeds `field`, `office` and `admin` (password `demo`), and the sign-in page offers them as one-click shortcuts. `STRATASENSE_AUTH=off` turns sign-in off for development.
 
 ### 3.19 Rig-site offline app
 - **Install.** `#/rig` is a full-screen, large-type view that installs as an app from `manifest.webmanifest`.
@@ -201,14 +203,23 @@ Planners edit mud weight, ECD or casing-shoe depth per section and the offset mo
 
 ### 3.20 Real public-data mode (Norwegian North Sea)
 - **Why.** OIL's nine data sources are internal, so a second, real knowledge base checks that the pipeline works on genuine records, not only on data it generated itself. [`DATA_SOURCES.md`](DATA_SOURCES.md) maps each OIL source to its public stand-in.
-- **Build.** `./run.sh --public` (or `python -m nwis.cli build-public --download --quadrants 15,16` with `NWIS_REGION=norway` and a separate `NWIS_DATA_DIR`) fetches five Sodir FactPages CSV exports once, caches them for offline use, and loads near-vertical exploration wellbores with their lithostratigraphic tops, casing, mud weights and LOT/FIT tests. The wellbore-history narratives run through the same NLP pipeline as DDRs and WCRs.
-- **Region.** `NWIS_REGION=norway` swaps the Upper-Assam stratigraphy for North Sea groups (Nordland … Hegre); well-known formation names map to their group, e.g. Draupne → Viking.
+- **Build.** **System → Dataset → Build North Sea knowledge base** (or `python -m stratasense.cli build-public --download --quadrants 15,16` with `STRATASENSE_REGION=norway` and a separate `STRATASENSE_DATA_DIR`) fetches five Sodir FactPages CSV exports once, caches them for offline use, and loads near-vertical exploration wellbores with their lithostratigraphic tops, casing, mud weights and LOT/FIT tests. The wellbore-history narratives run through the same NLP pipeline as DDRs and WCRs.
+- **Switching.** Admins switch between the two datasets with the **Synthetic · Assam | Real · North Sea** switch in the header, or in **System → Dataset**. The server restarts on the other knowledge base and every page reloads. `STRATASENSE_REGION` / `STRATASENSE_DATA_DIR` fix the choice, and the switch is then shown as locked.
+- **Region.** The North Sea dataset swaps the Upper-Assam stratigraphy for North Sea groups (Nordland … Hegre); well-known formation names map to their group, e.g. Draupne → Viking.
 - **Scale (quadrants 15 and 16, the Sleipner / Volve / Utsira High area).** 173 wellbores, 170 wellbore histories, 1,145 group tops, 817 hole sections, 339 LOT/FIT tests and about 90 extracted events, all cited to the history they came from.
 - **Licence.** NLOD 2.0. The required attribution is stored with the build and given in `DATA_SOURCES.md`.
+- **Real rig stream (Equinor Volve).** Sodir has no time series, so on its own the North Sea Live Ops shows "No real-time stream". **System → Dataset → Real rig stream for Live Ops** (or `stratasense.cli import-volve-stream <folder>`) turns one wellbore of Equinor's Volve real-time WITSML export (block 15/9, inside quadrant 15) into the replay:
+  - SI units are converted and the logs are resampled to 30 s.
+  - The most drilling-active window is kept.
+  - TVD comes from the WITSML survey; the wellhead position, TD and dates come from Sodir's development-wellbore table.
+  - The result is stored in `data_norway/public/volve` and re-applied on every rebuild.
+  - With the daily drilling reports (`--ddr`), the operator's coded interruptions (lost circulation, stuck pipe, well control, fishing, tight hole) become timed scenarios V1, V2…. A jump starts 30 min before the incident, and the live evaluation counts an alert from 30 min before to 10 min after it.
+  - The Equinor Open Data Licence attribution is shown on Live Ops.
+  - **Status:** tested on generated Volve-format samples only; the real export (free Databricks account) has not been imported yet.
 
 ## 4. Measured results (synthetic Upper-Assam dataset, reproducible)
 
-**Build knowledge base** on the first-run page (or `nwis.cli build-demo`) generates the data. It is deterministic (seed 26121) and takes about 2 minutes, or about 8 minutes on a 4-core machine when an OCR engine is installed, because the scanned-report evaluation then runs too. It produces **59 offset wells, 118 PDFs (4 scanned), 2,100+ pages, 132 extracted events (against 132 true events), 123 lessons, and 1,100+ citations**.
+**Build knowledge base** on the first-run page (or `stratasense.cli build-demo`) generates the data. It is deterministic (seed 26121) and takes about 2 minutes, or up to about 8 minutes on a 4-core machine when an OCR engine is installed, because the scanned-report evaluation then runs too. It produces **59 offset wells, 118 PDFs (4 scanned), 2,100+ pages, 132 extracted events (against 132 true events), 123 lessons, and 1,100+ citations**.
 
 | Capability | Metric | Result |
 |---|---|---|
@@ -233,7 +244,7 @@ Planners edit mud weight, ECD or casing-shoe depth per section and the offset mo
 
 **Honesty note:** these numbers validate the *pipeline mechanics* on synthetic data with known ground truth, which is why they can be measured at all. They are not field performance. The first pilot step is to re-measure them on OIL's own DDR/WCR archive (§7).
 
-`pytest` (80 tests) enforces these claims, as well as unit parsing, negation, minimum curvature, WITS-0 and WITSML parsing, the API/WebSocket surface, decision-log tamper detection, conformal false-alarm rates, physics baselines, DTW alignment, what-if isolation, memo peer review, after-action reviews, the handover brief, OCR repairs and scan recall, re-reading scans stored before OCR was installed, sign-in with role enforcement, and the dashboard operations (first-run set-up, staged rebuilds that keep accounts and the decision log, settings, live-feed switching, the rig simulator, bulk import and the maintenance jobs). The live-alerting numbers come from the live evaluation, which every build runs and **Analytics → Re-run live evaluation** repeats.
+`pytest` (87 tests, about 2.5 minutes with the project's `.venv` interpreter) enforces these claims, as well as unit parsing, negation, minimum curvature, WITS-0 and WITSML parsing, the API/WebSocket surface, decision-log tamper detection, conformal false-alarm rates, physics baselines, DTW alignment, what-if isolation, memo peer review, after-action reviews, the handover brief, OCR repairs and scan recall, re-reading scans stored before OCR was installed, sign-in with role enforcement, and the dashboard operations (first-run set-up, staged rebuilds that keep accounts and the decision log, settings, live-feed switching, the rig simulator, bulk import and the maintenance jobs), the public-data builds, and the Volve real-time import (unit conversion, null values, the replay window, drilling-report incidents as timed scenarios, and the live evaluation refusing a stream with no labelled incidents). The live-alerting numbers come from the live evaluation, which every build runs and **Analytics → Re-run live evaluation** repeats.
 
 ## 5. Seven-minute demo script (for judges)
 
@@ -247,7 +258,7 @@ Planners edit mud weight, ECD or casing-shoe depth per section and the offset mo
 3. **Rig-site view (20 s).** Show the big-font single instruction.
 4. **S3 (40 s).** Show dxc reversal plus gas, then the overpressure warning, then the kick detected and corroborated.
 5. **Risk & Planning (1 min).** Show the heatmap, the headline zones with CIs, and the MW window chart (planned MW left of the orange kick bound in Barail). Click **Generate Offset Hazard Brief**.
-6. **Knowledge (1 min).** Type "losses in Tipam within 5 km after 2012" and show the parsed chips. Then Ask NWIS "What worked for losses in Sylhet?" and click a citation.
+6. **Knowledge (1 min).** Type "losses in Tipam within 5 km after 2012" and show the parsed chips. Then Ask StrataSense "What worked for losses in Sylhet?" and click a citation.
 7. **Ingestion (40 s).** Load *Today's DDR*.
    - It shows negation and hypothetical sentences being ignored, and two events auto-accepted.
    - Then load the *Scanned legacy WCR* to show OCR.
@@ -265,6 +276,7 @@ Planners edit mud weight, ECD or casing-shoe depth per section and the offset mo
     - In **System → Rig simulator**, pick *S1* and 600×, and click **Start simulated rig** (this switches the feed to a WITS-0 listener by itself).
     - Open Live Ops, which is now on **● Live rig feed**. The topbar shows *LIVE · WITS-0* with packet health, and the S1 losses fire from real WITS-0 frames.
     - Open `#/rig` on a tablet and stop the server. The rig view stays up under an OFFLINE banner. Acknowledge the alert, restart the server, and the queued acknowledgement appears in the decision log.
+11. **Real data (30 s, admin).** Flip the header switch to **Real · North Sea**. The server restarts on 173 real Norwegian wells (Sodir FactPages) and opens on the Offset Map. Once the Volve stream has been imported, it opens on Live Ops with the real rig data instead.
 
 ## 6. Feasibility and deployment at OIL
 
@@ -292,8 +304,9 @@ The staged path to full deployment, with exit criteria and target metrics, is in
 
 - **Data.** The demo is synthetic because OIL's nine data sources are internal. It is calibrated to published Assam geology, so the metrics are about mechanism, not field accuracy. A real public-data mode (§3.20) runs the same pipeline on genuine wells, tops, casing, mud and incident histories; [`DATA_SOURCES.md`](DATA_SOURCES.md) also explains how to request real Assam data from DGH's National Data Repository.
 - **Public-data mode is a pipeline check, not a skill measurement.** Sodir histories are summaries, so incidents are under-reported (8 loss and 10 kick events across 173 wells in quadrants 15–16). With that few positives the leave-wells-out risk AUCs are not meaningful, ECD is approximated as mud weight + 0.3 ppg, and only near-vertical wells are used, so MD is treated as TVD. North Sea geology is not Assam.
+- **The Volve rig-stream importer has not yet been run on the real export.** It is tested on generated files in the Volve format; the real download needs a free Databricks account, and its channel names may need mapping fixes. Its incidents are the operator's activity codes, timed only to the report's resolution (often 15–30 min), not hand-checked truth. The Volve wellbore's formation tops are predicted from nearby Sodir wells, not picked.
 - OCR is measured on synthetic scans (a clean 200-dpi scan and a 150-dpi photocopy), not on OIL's archive. Handwriting, stamps over text, tables with ruled grids and faded carbon copies are not in the test set. The design compensates with confidence scores, the review queue and cross-document consolidation, since DDRs usually repeat what the WCR says.
-- Sign-in uses local accounts stored in the NWIS database. Production would federate with OIL's directory (SSO/LDAP), and the session secret should be set explicitly (`NWIS_SECRET`) when more than one server shares users.
+- Sign-in uses local accounts stored in the StrataSense database. Production would federate with OIL's directory (SSO/LDAP), and the session secret should be set explicitly (`STRATASENSE_SECRET`) when more than one server shares users.
 - The stuck-pipe ML model underperforms the base rate in cross-validation (0.68 vs 0.78 AUC). The blend therefore gives it weight 0, so stuck-pipe risk comes from offset evidence and the real-time risk index.
 - The alarm budget only trims non-critical alerts. Most remaining nuisance false alarms in the stress test are critical-level pit-transfer "losses", which it deliberately never hides. A pit-transfer flag from the rig would remove them.
 - DTW picked the Tipam top 49 m early because a sand streak sits inside the Girujan clay. That is why the default mode uses DTW as a QC beside the mud logger and not as the sole source.

@@ -61,7 +61,7 @@ export default function OffsetMap() {
     <div style={{ display: "grid", gridTemplateColumns: "minmax(420px, 1.6fr) minmax(320px, 1fr)", gap: 12 }}>
       <div className={`card ${tilesOk ? "" : "gridbg"}`} style={{ padding: 0, height: 620, position: "relative" }}>
         {active && <MapContainer center={[active.lat, active.lon]} zoom={11} style={{ height: "100%", width: "100%" }} preferCanvas>
-          {/* keyless tiles by default; the server can point this at an on-prem tile server (NWIS_TILE_URL) */}
+          {/* keyless tiles by default; the server can point this at an on-prem tile server (STRATASENSE_TILE_URL) */}
           {tilesOk && <TileLayer url={meta.map_tiles?.url ?? "https://tile.openstreetmap.org/{z}/{x}/{y}.png"}
             attribution={meta.map_tiles?.attribution ?? "&copy; OpenStreetMap contributors"} className="basemap"
             eventHandlers={{ tileerror: () => setTilesOk(false) }} />}

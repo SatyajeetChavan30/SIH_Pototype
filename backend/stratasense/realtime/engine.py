@@ -37,6 +37,14 @@ CHANNELS = ["t", "md", "tvd", "gr", "rop", "wob", "rpm", "torque", "spp", "flow_
 RAW_CHANNELS = ("rop", "wob", "rpm", "torque", "spp", "flow_in", "flow_out", "pit", "hookload", "gas", "mw", "gr", "ecd")
 
 
+def episode_start_index(ep: dict, t, md) -> int:
+    """Where a scenario jump starts: 30 min before a timed incident (real streams: bit depth is not monotonic),
+    otherwise 170 m above a scripted episode's onset depth."""
+    if ep.get("t") is not None:
+        return max(int(np.searchsorted(t, float(ep["t"]) - 1800.0)), 0)
+    return max(int(np.searchsorted(md, ep.get("onset_md", ep["md"]) - 170)), 0)
+
+
 def _hole_in(hole: str | None) -> float:
     """'12-1/4"' -> 12.25 (bit size for the d-exponent)."""
     m = re.match(r"\s*(\d+)(?:-(\d+)/(\d+))?", hole or "")
@@ -267,9 +275,7 @@ class LiveSession:
         ep = next((e for e in self.episodes if e["id"] == ep_id), None)
         if not ep:
             return
-        start_md = ep.get("onset_md", ep["md"]) - 170
-        idx = int(np.searchsorted(self.data["md"], start_md))
-        self.reset(max(idx, 0))
+        self.reset(episode_start_index(ep, self.data["t"], self.data["md"]))
 
     # ------------------------------------------------------------------ main
     def sample(self, i: int) -> dict:

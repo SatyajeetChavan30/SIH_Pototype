@@ -46,14 +46,14 @@ export default function Setup({ initial }: { initial: SetupStatus }) {
 
   return <div className="login-page">
     <div className="card setup">
-      <div className="brand" style={{ marginBottom: 4 }}><Logo /><span>eRTMAC-NWIS <small>Nearby Wells Intelligence System</small></span></div>
-      <h2 className="view" style={{ margin: "10px 0 2px" }}>{running ? "Building the knowledge base" : "Welcome — let's set up NWIS"}</h2>
+      <div className="brand" style={{ marginBottom: 4 }}><Logo /><span>StrataSense <small>Nearby Wells Intelligence System</small></span></div>
+      <h2 className="view" style={{ margin: "10px 0 2px" }}>{running ? "Building the knowledge base" : "Welcome — let's set up StrataSense"}</h2>
 
       {restarting != null ? <div className="col" style={{ gap: 8 }}>
-        <p className="lede">The knowledge base is built. NWIS is restarting to load it… <span className="muted num">{fmtDuration(restarting)}</span></p>
+        <p className="lede">The knowledge base is built. StrataSense is restarting to load it… <span className="muted num">{fmtDuration(restarting)}</span></p>
         <div className="progress"><div className="indeterminate" style={{ width: "100%" }} /></div>
       </div> : running && job ? <div className="col" style={{ gap: 10 }}>
-        <p className="lede" style={{ margin: 0 }}>NWIS is generating the offset wells, reading every drilling and completion report (NLP + OCR),
+        <p className="lede" style={{ margin: 0 }}>StrataSense is generating the offset wells, reading every drilling and completion report (NLP + OCR),
           training the risk models and replaying the active well. This takes a few minutes; you can leave this page open or come back later.</p>
         <ol className="steps">
           {stages.map((s, i) => <li key={s} className={i < cur ? "done" : i === cur ? "now" : ""}>
@@ -61,7 +61,7 @@ export default function Setup({ initial }: { initial: SetupStatus }) {
         </ol>
         <JobView job={job} compact />
       </div> : <div className="col" style={{ gap: 10 }}>
-        <p className="lede" style={{ margin: 0 }}>There is no knowledge base on this server yet. Choose the data to start with; NWIS builds it here,
+        <p className="lede" style={{ margin: 0 }}>There is no knowledge base on this server yet. Choose the data to start with; StrataSense builds it here,
           on this machine, and opens the dashboard when it is ready. Nothing needs to be typed in a terminal.</p>
         {st.load_error && <div className="banner small">The existing knowledge base could not be loaded ({st.load_error}). Build it again below.</div>}
         {job && job.status !== "running" && job.status !== "done" && <div className="card" style={{ background: "var(--surface-2)" }}>

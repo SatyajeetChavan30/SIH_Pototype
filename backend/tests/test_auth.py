@@ -4,8 +4,8 @@ import shutil
 
 import pytest
 
-from nwis import auth, config
-from nwis.db import DB
+from stratasense import auth, config
+from stratasense.db import DB
 
 
 @pytest.fixture()
@@ -62,11 +62,11 @@ built = pytest.mark.skipif(not config.DB_PATH.exists(), reason="demo knowledge b
 @pytest.fixture(scope="module")
 def app_client(tmp_path_factory):
     from fastapi.testclient import TestClient
-    import nwis.api.main as main
-    dst = tmp_path_factory.mktemp("nwis") / "data"
+    import stratasense.api.main as main
+    dst = tmp_path_factory.mktemp("stratasense") / "data"
     shutil.copytree(config.DATA_DIR, dst, ignore=shutil.ignore_patterns("documents", "eval", "uploads"))
     mp = pytest.MonkeyPatch()
-    for name, sub in (("DATA_DIR", None), ("DB_PATH", "nwis.db"), ("LOGS_DIR", "logs"), ("MODELS_DIR", "models"),
+    for name, sub in (("DATA_DIR", None), ("DB_PATH", "stratasense.db"), ("LOGS_DIR", "logs"), ("MODELS_DIR", "models"),
                       ("UPLOADS_DIR", "uploads")):
         mp.setattr(config, name, dst / sub if sub else dst)
     mp.setattr(config, "AUTH", True)

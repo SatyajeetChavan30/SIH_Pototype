@@ -13,6 +13,10 @@ export interface Meta {
   stream?: { live_available: boolean; spec: string; describe: string };
   map_tiles?: { url: string; attribution: string };
   synthetic?: boolean;
+  boot?: string;
+  datasets?: { current: string; locked: boolean; options: { code: string; label: string; synthetic: boolean; built: boolean; stream?: boolean }[] };
+  stream_source?: { source: string; wellbore: string; attribution: string; url: string; derived: string[]; logs: string[]; incidents?: number;
+    window: { start: string; end: string; hours: number; md_from: number; md_to: number } } | null;
   build: { seed: number; seconds: number; n_wells: number; n_docs: number; ocr_pages: number } | null;
   formation_order: string[];
   ribbon_hazards: Hazard[];
