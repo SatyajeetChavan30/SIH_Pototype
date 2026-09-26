@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime as dt
 import socket
+import threading
 import time
 
 import numpy as np
@@ -40,27 +41,38 @@ def start_index_for_md(md: float) -> int:
     return int(np.searchsorted(z["md"], md))
 
 
-def _send_all(conn: socket.socket, start: int, limit: int | None, speed: float, log=print) -> int:
+def _send_all(conn: socket.socket, start: int, limit: int | None, speed: float, log=print,
+              stop: threading.Event | None = None, on_frame=None) -> int:
     n, prev = 0, None
     for ts, pkt in frames(start, limit):
         if prev is not None and speed > 0:
-            time.sleep(max(ts - prev, 0.0) / speed)
+            delay = max(ts - prev, 0.0) / speed
+            if stop is not None:
+                if stop.wait(delay):
+                    break
+            else:
+                time.sleep(delay)
+        elif stop is not None and stop.is_set():
+            break
         prev = ts
         conn.sendall(pkt.encode("ascii"))
         n += 1
+        if on_frame is not None:
+            on_frame(n, pkt)
         if n % 500 == 0:
             log(f"  sent {n} frames")
     return n
 
 
 def run(connect: str | None = None, listen: int | None = None, speed: float = 60.0, start: int = 0,
-        limit: int | None = None, log=print) -> int:
-    """Push frames to NWIS's listener (connect='host:port') or wait for NWIS to connect (listen=port)."""
+        limit: int | None = None, log=print, stop: threading.Event | None = None, on_frame=None) -> int:
+    """Push frames to NWIS's listener (connect='host:port') or wait for NWIS to connect (listen=port).
+    `stop` ends the stream early (the dashboard's Stop button); `on_frame(n, packet)` reports progress."""
     if connect:
         host, _, port = connect.rpartition(":")
         with socket.create_connection((host or "127.0.0.1", int(port)), timeout=10) as c:
             log(f"connected to {connect}; streaming at {speed:g}x")
-            return _send_all(c, start, limit, speed, log)
+            return _send_all(c, start, limit, speed, log, stop, on_frame)
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("0.0.0.0", int(listen or 5501)))
@@ -69,6 +81,6 @@ def run(connect: str | None = None, listen: int | None = None, speed: float = 60
     conn, addr = srv.accept()
     with conn:
         log(f"NWIS connected from {addr[0]}; streaming at {speed:g}x")
-        n = _send_all(conn, start, limit, speed, log)
+        n = _send_all(conn, start, limit, speed, log, stop, on_frame)
     srv.close()
     return n

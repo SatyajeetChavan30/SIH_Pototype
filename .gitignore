@@ -4,14 +4,12 @@ __pycache__/
 .venv/
 *.egg-info/
 .pytest_cache/
-# Generated demo data (rebuild with: python -m nwis.cli build-demo)
+# Generated knowledge bases (built from the dashboard), rebuilds in progress, dashboard settings
 /data/
 /data_norway/
-# dashboard rebuilds: staged builds and the previous folder kept as a backup
-/data.next-*/
-/data.bak-*/
-/data_norway.next-*/
-/data_norway.bak-*/
+/data*.staging/
+/data*.old/
+/nwis_settings.json
 # Frontend
 frontend/node_modules/
 frontend/dist/

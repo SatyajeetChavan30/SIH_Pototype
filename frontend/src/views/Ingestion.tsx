@@ -3,6 +3,7 @@ import { api } from "../api";
 import { useApp } from "../context";
 import MemoCard from "../components/MemoCard";
 import UploadDrop, { uploadReport } from "../components/UploadDrop";
+import { JobView, uploadJob, useJob, type Job } from "../jobs";
 import { HAZARD_COLOR, HAZARD_SHORT, fmt } from "../theme";
 
 const ROLE_COLOR: Record<string, string> = {
@@ -80,6 +81,7 @@ export default function Ingestion() {
         {busy && <div className="small">Processing {busy}… {busy.includes("scan") ? "(OCR takes a few seconds per page)" : ""}</div>}
         {err && <div className="banner">{err}</div>}
       </div>
+      <BulkImport onDone={loadSide} />
       <MemoCard onResult={(r) => { setRes(r); loadSide(); }} />
       </div>
       <div className="card">
@@ -165,5 +167,46 @@ export default function Ingestion() {
               : <a className="small" href={`/api/documents/${d.id}/file`} target="_blank" rel="noreferrer">open</a>}</td></tr>)}</tbody></table>
       </div>
     </div>
+  </div>;
+}
+
+/** Many reports at once: several files, a whole folder or a .zip archive, read as a background job. */
+function BulkImport({ onDone }: { onDone: () => void }) {
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [over, setOver] = useState(false);
+  const [job] = useJob(jobId, () => onDone());
+  const send = async (files: File[]) => {
+    const ok = files.filter((f) => /\.(pdf|xml|zip)$/i.test(f.name));
+    if (!ok.length) { setErr("No PDF, XML or ZIP files in that selection."); return; }
+    setErr(null);
+    try { setJobId(((await uploadJob("/api/ingest/batch", ok)) as Job).id); } catch (e: any) { setErr(e.message); }
+  };
+  const r = job?.result;
+  return <div className="card col">
+    <h3>Bulk import <span className="sub">a folder of DDRs / WCRs, many files, or a .zip archive</span></h3>
+    <div className="row wrap" style={{ gap: 8 }}>
+      <label className={`card dropzone ${over ? "over" : ""}`} style={{ flex: 1 }}
+        onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
+        onDrop={(e) => { e.preventDefault(); setOver(false); send([...e.dataTransfer.files]); }}>
+        <input type="file" multiple accept=".pdf,.xml,.zip" style={{ display: "none" }} onChange={(e) => e.target.files && send([...e.target.files])} />
+        Drop files or a .zip here, or click to choose files
+      </label>
+      <label className="btn sm">Choose a folder…
+        {/* @ts-expect-error non-standard attribute supported by all current browsers */}
+        <input type="file" webkitdirectory="" directory="" multiple style={{ display: "none" }} onChange={(e) => e.target.files && send([...e.target.files])} />
+      </label>
+    </div>
+    {err && <div className="banner small">{err}</div>}
+    {job && <JobView job={job} />}
+    {r && <>
+      <div className="small"><b>{r.n_files}</b> file(s) read · <b>{r.events}</b> events extracted · <b>{r.review}</b> sent to the review queue{r.errors ? <> · <span style={{ color: "var(--bad-ink)" }}>{r.errors} skipped</span></> : null}</div>
+      <div className="scroll" style={{ maxHeight: 220 }}>
+        <table className="t"><thead><tr><th>File</th><th>Well</th><th className="num">Pages</th><th className="num">Events</th><th className="num">To review</th></tr></thead>
+          <tbody>{r.files.map((f: any, i: number) => <tr key={i}><td>{f.file}{f.error && <div className="small" style={{ color: "var(--bad-ink)" }}>{f.error}</div>}</td>
+            <td>{f.well_id ?? "–"}</td><td className="num">{f.pages ?? ""}</td><td className="num">{f.events ?? ""}</td><td className="num">{f.review ?? ""}</td></tr>)}</tbody></table>
+      </div>
+    </>}
+    <div className="small muted">Each report goes through the same NLP/OCR pipeline as a single upload. WITSML drillReport XML (e.g. the public Equinor Volve reports) is read too.</div>
   </div>;
 }

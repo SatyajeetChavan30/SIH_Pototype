@@ -4,7 +4,8 @@ Roles
   field   rig-site / driller: live alerts, map, correlation, risk, knowledge, expert memos, alert acknowledgement
   office  drilling engineer / RTOC: everything a field user has, plus document ingestion, the review queue,
           after-action review approval, the what-if planner and analytics
-  admin   office rights plus user management and decision-log verification
+  admin   office rights plus user management, decision-log verification and the System view (dataset builds,
+          live rig feed, settings, restart, optional engines)
 
 The access policy lives in one table (`RULES`) and is enforced by a middleware in `api/main.py`, so an endpoint
 cannot forget its check. The signed-in user is also the `actor` written to the decision log: an acknowledgement or
@@ -33,12 +34,14 @@ _ITER = 200_000
 RULES: list[tuple[str | None, str, tuple[str, ...]]] = [
     (None, "/api/health", ()),
     (None, "/api/auth/", ()),
+    (None, "/api/setup/", ()),          # first-run page; building is refused once a knowledge base is loaded
+    (None, "/api/admin/", ("admin",)),  # dataset, live feed, settings, restart, installs
+    (None, "/api/jobs", OFFICE),
     ("POST", "/api/ingest", OFFICE),
     (None, "/api/review", OFFICE),
     ("POST", "/api/aar/", OFFICE),
     ("POST", "/api/risk/whatif", OFFICE),
     (None, "/api/analytics", OFFICE),
-    (None, "/api/jobs", OFFICE),        # admin-only kinds (knowledge-base rebuilds) are checked by the endpoint
     (None, "/api/audit/verify", ("admin",)),
     (None, "/api/users", ("admin",)),
 ]

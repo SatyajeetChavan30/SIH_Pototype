@@ -99,6 +99,12 @@ class LiveStore {
       if (this.ws !== ws) return;             // an intentional reconnect (mode switch) already replaced it
       this.d.connected = false; this.ws = null;
       if (this.d.noStream) { this.bump(true); return; }   // nothing to reconnect to
+      if (ev.code === 4000) {                 // the feed was replaced from the System view: reconnect now
+        this.attempts = 0;
+        this.retry = window.setTimeout(() => this.connect(), 300);
+        this.bump(true);
+        return;
+      }
       if (ev.code === 4401) {
         // the server refused the session (signed out or expired): show sign-in instead of retrying forever;
         // LiveProvider reconnects once the user is back in
@@ -137,6 +143,8 @@ class LiveStore {
     if (m.type === "error" && m.code === "no_stream") {
       d.noStream = m.message;
     } else if (m.type === "init") {
+      // the server serves the replay when no live feed is connected (e.g. it was switched off in System)
+      if (m.mode && m.mode !== d.mode) { d.mode = m.mode; save(MODE_KEY, m.mode); }
       d.playing = true; d.offlineSince = null; d.noStream = null;
       d.samples = []; d.alerts = new Map(); d.events = [];
       d.episodes = m.episodes; d.zones = m.zones; d.tops = m.tops; d.window = m.window; d.grid = m.grid; d.ribbon = m.ribbon;

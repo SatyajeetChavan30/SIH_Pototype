@@ -21,7 +21,7 @@ const episodePlace = (label: string) => {
 
 export default function LiveOps() {
   const { user, can } = useAuth();
-  const { meta, fmName } = useApp();
+  const { meta, fmName, go } = useApp();
   const [live, send, setMode] = useLive();
   const [sel, setSel] = useState<string | null>(null);
   const [rig, setRig] = useState(false);
@@ -43,6 +43,8 @@ export default function LiveOps() {
     <h3>No real-time stream in this dataset</h3>
     <div>{live.noStream}</div>
     <div className="small muted" style={{ marginTop: 8 }}>{meta.ontology.region?.data_notice} Offset Map, Correlation, Risk &amp; Planning and Knowledge work on this data.</div>
+    {can("admin") && <div className="row" style={{ gap: 8, marginTop: 10 }}>
+      <button className="btn sm primary" onClick={() => go("system")}>⚙ Connect a rig feed or switch dataset</button></div>}
   </div>;
   if (!live.connected && !st) return <div className="empty">Connecting to the eRTMAC stream…</div>;
   const win = st?.window;
@@ -75,6 +77,8 @@ export default function LiveOps() {
     <label className="small row" style={{ gap: 4 }} title="Pause the replay whenever a new critical alert opens">
       <input type="checkbox" checked={live.autoPause} onChange={(e) => send({ cmd: "autoPause", value: e.target.checked })} /> auto-pause on critical</label>
     </>}
+    {!meta.stream?.live_available && can("admin") && <button className="btn sm ghost" onClick={() => go("system")}
+      title="Connect a WITS-0 / WITSML rig feed, or start the rig simulator">⚙ Connect live feed</button>}
     <button className={`btn sm ${rig ? "primary" : ""}`} onClick={() => setRig(!rig)}>{rig ? "RTOC view" : "Rig-site view"}</button>
     <button className="btn sm" onClick={() => send({ cmd: "handover", hours: 12 })} title="Cited summary of the last 12 h for the next shift">📝 Handover brief</button>
   </div>;
@@ -94,7 +98,7 @@ export default function LiveOps() {
   const stream = st?.stream;
   const statusBanners = <>
     <OfflineBanner live={live} />
-    {isLive && can(...OFFICE) && <SimulatorCard />}
+    {isLive && can("admin") && <SimulatorCard />}
     {isLive && st?.waiting && <div className="banner">Linked to {stream?.describe ?? "the rig feed"}; waiting for the first WITS packet…</div>}
     {isLive && live.events.find((e) => e.type === "stream_gap" || e.type === "stream_resumed")?.type === "stream_gap" &&
       <div className="banner" style={{ borderColor: LEVEL.warning.color }}>⚠ {live.events.find((e) => e.type === "stream_gap")!.message}</div>}

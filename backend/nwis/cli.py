@@ -1,5 +1,12 @@
-"""Command line: python -m nwis.cli build-demo | serve | import-volve <dir> | metrics | evaluate-live | evaluate-ocr |
-reread-scans | simulate-rig | validate-volve <dir> | retrain-risk | retrain-classifier"""
+"""Command line.
+
+Day-to-day use needs none of this: `start` (what start.bat / run.sh call) runs the server and opens the dashboard,
+and everything else - building the knowledge base, switching dataset, imports, evaluations, retraining, the live
+rig feed, the rig simulator, settings - is done in the browser. The other commands remain for scripting and CI
+(the dashboard's maintenance jobs also run some of them as subprocesses):
+build-demo | serve | import-volve <dir> | metrics | evaluate-live | evaluate-ocr | reread-scans | simulate-rig |
+validate-volve <dir> | build-public | retrain-risk | retrain-classifier
+"""
 from __future__ import annotations
 
 import argparse
@@ -9,6 +16,10 @@ import json
 def main() -> None:
     ap = argparse.ArgumentParser(prog="nwis", description="eRTMAC-NWIS prototype")
     sub = ap.add_subparsers(dest="cmd", required=True)
+    st = sub.add_parser("start", help="run the server under a supervisor (restarts from the dashboard) and open it")
+    st.add_argument("--host", default="0.0.0.0")
+    st.add_argument("--port", type=int, default=8000)
+    st.add_argument("--open", action="store_true", help="open the dashboard in the default browser")
     sub.add_parser("build-demo", help="generate synthetic data, ingest documents, train models")
     s = sub.add_parser("serve", help="run the API + web app")
     s.add_argument("--host", default="0.0.0.0")
@@ -41,7 +52,9 @@ def main() -> None:
     r.add_argument("--from-md", type=float, default=None, help="start at this bit depth (e.g. 2120 for scenario S1)")
     r.add_argument("--limit", type=int, default=None, help="stop after this many frames")
     a = ap.parse_args()
-    if a.cmd == "build-demo":
+    if a.cmd == "start":
+        supervise(a.host, a.port, a.open)
+    elif a.cmd == "build-demo":
         from .build import build
         build()
     elif a.cmd == "serve":
@@ -136,6 +149,52 @@ def main() -> None:
         except ValueError as e:
             raise SystemExit(str(e))
         print(f"[retrain] reviewed labels used: {info['labels']}")
+
+
+def supervise(host: str, port: int, open_browser: bool) -> None:
+    """Keep the server running; the dashboard restarts it (dataset switch, rebuild) by exiting with RESTART_EXIT."""
+    import os
+    import subprocess
+    import sys
+    import threading
+    import time
+    import urllib.request
+    import webbrowser
+    from .ops import RESTART_EXIT
+    url = f"http://{'localhost' if host in ('0.0.0.0', '::') else host}:{port}"
+
+    def open_when_up():
+        for _ in range(120):
+            try:
+                urllib.request.urlopen(f"{url}/api/health", timeout=2)
+                print(f"[nwis] dashboard: {url}", flush=True)
+                webbrowser.open(url)
+                return
+            except OSError:
+                time.sleep(1)
+
+    env = {**os.environ, "NWIS_SUPERVISED": "1"}
+    first = True
+    while True:
+        proc = subprocess.Popen([sys.executable, "-m", "nwis.cli", "serve", "--host", host, "--port", str(port)], env=env)
+        if first:
+            print(f"[nwis] starting on {url}  (Ctrl+C to stop)", flush=True)
+            if open_browser:
+                threading.Thread(target=open_when_up, daemon=True).start()
+            first = False
+        try:
+            rc = proc.wait()
+        except KeyboardInterrupt:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            return
+        if rc != RESTART_EXIT:
+            sys.exit(rc)
+        print("[nwis] restarting (requested from the dashboard)", flush=True)
+
 
 if __name__ == "__main__":
     main()

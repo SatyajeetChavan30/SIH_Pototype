@@ -99,7 +99,7 @@ def test_api_requires_sign_in_and_enforces_roles(app_client):
     assert c.get("/api/review").status_code == 403
     assert c.post("/api/risk/whatif", json={}).status_code == 403
     assert c.get("/api/jobs").status_code == 403
-    assert c.post("/api/jobs", json={"kind": "retrain-risk"}).status_code == 403
+    assert c.post("/api/analytics/maintenance/retrain-risk").status_code == 403
 
     _login(c, "office")
     assert c.get("/api/review").status_code == 200
@@ -107,7 +107,8 @@ def test_api_requires_sign_in_and_enforces_roles(app_client):
     assert c.post("/api/users", json={"username": "x", "role": "field", "password": "xxxx"}).status_code == 403
 
     assert c.get("/api/jobs").status_code == 200
-    assert c.post("/api/jobs", json={"kind": "build-demo"}).status_code == 403     # rebuilds are admin-only
+    assert c.get("/api/analytics/maintenance").status_code == 200
+    assert c.post("/api/admin/build", json={"dataset": "assam"}).status_code == 403     # rebuilds are admin-only
 
     _login(c, "admin")
     assert c.get("/api/audit/verify").json()["ok"]

@@ -5,6 +5,7 @@ import asyncio
 import datetime as dt
 import json
 import shutil
+import sys
 import threading
 from contextlib import asynccontextmanager
 from collections import Counter, defaultdict
@@ -16,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .. import audit, auth, config, jobs
+from .. import audit, auth, config, ops
 from ..correlation import correlation_panel, default_plan, target_from_well
 from ..db import DB
 from ..domain.ontology import REGION as ONTOLOGY_REGION
@@ -29,6 +30,7 @@ from ..kb import KnowledgeBase
 from ..kg import summary_subgraph
 from ..llm import llm_status
 from ..ingest.voice import asr_status, transcribe
+from ..jobs import JOBS, Job, run_process
 from ..memory import after_action_review, approve_aar, handover_brief
 from ..realtime.analogs import AnalogIndex
 from ..realtime.engine import LiveSession
@@ -75,6 +77,8 @@ def J(data, status: int = 200) -> JSONResponse:
 class State:
     def __init__(self):
         self.lock = threading.RLock()
+        self.index_lock = threading.Lock()
+        self.analog_lock = threading.Lock()
         self.db = DB()
         self.kb: KnowledgeBase | None = None
         self.model: RiskModel | None = None
@@ -82,28 +86,66 @@ class State:
         self._analogs: AnalogIndex | None = None
         self.clf: SentenceClassifier | None = None
         self.hub: LiveHub | None = None
+        self.hub_task: asyncio.Task | None = None
+        self.loop: asyncio.AbstractEventLoop | None = None
         self.ready = False
+        self.load_error: str | None = None
 
     def load(self):
         if not config.DB_PATH.exists():
             return
-        self.db.init()   # CREATE IF NOT EXISTS: upgrades older demo databases with new tables (decision_log)
-        auth.ensure_demo_users(self.db)
-        self.kb = KnowledgeBase(self.db)
-        self.model = RiskModel.load(config.MODELS_DIR / "risk_model.joblib")
-        self.clf = SentenceClassifier.load(config.MODELS_DIR / "sentence_clf.joblib")
+        try:
+            self.db.init()   # CREATE IF NOT EXISTS: upgrades older demo databases with new tables (decision_log)
+            auth.ensure_demo_users(self.db)
+            self.kb = KnowledgeBase(self.db)
+            self.model = RiskModel.load(config.MODELS_DIR / "risk_model.joblib")
+            self.clf = SentenceClassifier.load(config.MODELS_DIR / "sentence_clf.joblib")
+        except Exception as e:  # noqa: BLE001 - a broken or half-built base: offer a rebuild in the page instead
+            self.load_error = f"{type(e).__name__}: {e}"[:300]
+            return
+        self._index = self._analogs = None
+        self.load_error = None
         self.ready = True
 
+    async def start_services(self):
+        """Warm the search + analog indexes in the background and attach the configured rig feed."""
+        threading.Thread(target=lambda: (self.analogs, self.index), daemon=True).start()   # live consoles need analogs first
+        try:
+            await self.set_stream(config.STREAM)
+        except Exception as e:  # noqa: BLE001 - a bad feed setting must not stop the dashboard from starting
+            print(f"[nwis] live feed '{config.STREAM}' not started: {e}", flush=True)
+
+    async def stop_hub(self):
+        hub, task = self.hub, self.hub_task
+        self.hub, self.hub_task = None, None
+        if hub is not None:
+            hub.broadcast({"type": "reconnect"})   # consoles on the old feed reconnect to whatever replaces it
+            await asyncio.sleep(0.2)
+            hub.source.stop()
+        if task is not None:
+            task.cancel()
+
+    async def set_stream(self, spec: str):
+        """Replace the live rig feed while the server runs ('replay' = no shared feed)."""
+        src = from_spec(spec)        # raises ValueError on a malformed setting, before anything is stopped
+        await self.stop_hub()
+        config.STREAM = spec
+        if src is not None and self.ready:   # a real rig feed: one shared session for every console
+            self.hub = await asyncio.to_thread(LiveHub, self.kb, self.model, src,
+                                               lambda rows: audit.append_many(self.db, rows), lambda: self._analogs)
+            self.hub_task = asyncio.create_task(self.hub.run())
+
+    # each index has its own lock: a search waiting for the (slow) search index must not hold up live consoles
     @property
     def index(self) -> SearchIndex:
-        with self.lock:
+        with self.index_lock:
             if self._index is None:
                 self._index = SearchIndex(self.kb)
             return self._index
 
     @property
     def analogs(self) -> AnalogIndex:
-        with self.lock:
+        with self.analog_lock:
             if self._analogs is None:
                 self._analogs = AnalogIndex(self.kb)
             return self._analogs
@@ -111,7 +153,8 @@ class State:
     def refresh(self):
         with self.lock:
             self.kb.refresh()
-            self._index = None
+            with self.index_lock:
+                self._index = None
 
 
 S = State()
@@ -119,22 +162,14 @@ S = State()
 
 @asynccontextmanager
 async def lifespan(_app):
-    jobs.swap_pending_build(config.DATA_DIR)   # a rebuild finished by the dashboard, not yet switched in
+    ops.promote_all()   # a rebuild finished in the dashboard is swapped in before anything opens the database
+    S.loop = asyncio.get_running_loop()
     S.load()
-    task = None
-    if S.ready:  # warm the search + analog indexes in the background
-        threading.Thread(target=lambda: (S.index, S.analogs), daemon=True).start()
-        src = from_spec(config.STREAM)
-        if src is not None:   # a real rig feed: one shared session for every console
-            S.hub = await asyncio.to_thread(LiveHub, S.kb, S.model, src, lambda rows: audit.append_many(S.db, rows),
-                                            lambda: S._analogs)
-            task = asyncio.create_task(S.hub.run())
+    if S.ready:
+        await S.start_services()
     yield
-    for j in JOBS.running():   # do not leave orphaned build / simulator processes behind
-        JOBS.cancel(j.id)
-    if task is not None:
-        task.cancel()
-        S.hub.source.stop()
+    ops.SIM.stop_evt.set()
+    await S.stop_hub()
 
 
 app = FastAPI(title="eRTMAC-NWIS", version="0.1.0", lifespan=lifespan,
@@ -166,9 +201,12 @@ def _actor(request: Request, claimed: str | None, default: str = "RTOC", n: int 
     return (str(claimed or "").strip() or default)[:n]
 
 
+NOT_BUILT = "The knowledge base is not built yet. Open NWIS in the browser and choose 'Build knowledge base'."
+
+
 def kb() -> KnowledgeBase:
     if not S.ready:
-        raise HTTPException(503, "Knowledge base not built. Run: python -m nwis.cli build-demo")
+        raise HTTPException(503, NOT_BUILT)
     return S.kb
 
 
@@ -187,7 +225,7 @@ def _target(well_id: str | None, lat: float | None, lon: float | None, td_format
 @app.post("/api/auth/login")
 def login(body: dict, response: Response):
     if not S.ready:
-        raise HTTPException(503, "Knowledge base not built. Run: python -m nwis.cli build-demo")
+        raise HTTPException(503, NOT_BUILT)
     user = auth.authenticate(S.db, body.get("username") or "", body.get("password") or "")
     if user is None:
         raise HTTPException(401, "wrong username or password")
@@ -228,7 +266,7 @@ def add_user(body: dict):
 # ---------------------------------------------------------------------------- meta
 @app.get("/api/health")
 def health():
-    return {"ok": True, "ready": S.ready}
+    return {"ok": True, "ready": S.ready, "boot": ops.BOOT_ID}
 
 
 @app.get("/api/meta")
@@ -663,188 +701,78 @@ def analytics():
               "live_eval": S.db.kv_get("live_eval"), "public_eval": S.db.kv_get("public_eval")})
 
 
-# ---------------------------------------------------------------------------- background jobs (Analytics > Maintenance)
-REGION_HOME = {"assam": "data", "norway": "data_norway"}
-
-
-def _home(region: str) -> Path:
-    """Data folder a build for `region` replaces: the one being served for this region, else the default folder."""
-    return config.DATA_HOME if region == config.REGION else config.ROOT / REGION_HOME[region]
-
-
-def _switch_data(new_dir: Path) -> None:
-    """Serve a rebuilt knowledge base without a restart (the swap into place happens at the next start)."""
-    global S
-    config.set_data_dir(new_dir)
-    s = State()
-    s.load()
-    if s.ready:
-        threading.Thread(target=lambda: (s.index, s.analogs), daemon=True).start()
-    S = s
-
-
-def _build_kind(key: str, region: str, label: str, description: str, argv, params=lambda raw: {}) -> jobs.Kind:
-    def before(job: jobs.Job) -> None:
-        job.workdir = jobs.staged_dir(_home(region))
-        job.workdir.mkdir(parents=True)
-
-    def after(job: jobs.Job) -> dict:
-        live_target = region == config.REGION
-        carried = jobs.finalize_build(job.workdir, config.DATA_DIR if live_target else _home(region))
-        if live_target and S.hub is None:
-            _switch_data(job.workdir)
-            return {"applied": "live", "reload": True, "carried": carried,
-                    "message": "The rebuilt knowledge base is now being served."}
-        how = ("restart NWIS" if live_target else
-               "start NWIS with ./run.sh --public" if region == "norway" else "start NWIS with ./run.sh")
-        return {"applied": "restart", "reload": False, "carried": carried,
-                "message": f"Built. It replaces {_home(region).name} the next time you {how}."}
-
-    def cleanup(job: jobs.Job) -> None:
-        if job.workdir is not None:
-            shutil.rmtree(job.workdir, ignore_errors=True)
-
-    return jobs.Kind(key, label, description, "admin", argv, params=params,
-                     env=lambda p: {"NWIS_REGION": region}, before=before, after=after, cleanup=cleanup)
-
-
-def _sim_params(raw: dict) -> dict:
-    speed = float(raw.get("speed", 60))
-    if not 0 <= speed <= 1000:
-        raise ValueError("speed must be between 0 and 1000")
-    md = raw.get("from_md")
-    md = None if md in (None, "") else float(md)
-    if md is not None and md < 0:
-        raise ValueError("from_md must be positive")
-    return {"speed": speed, "from_md": md}
-
-
-def _public_params(raw: dict) -> dict:
-    q = str(raw.get("quadrants", "15,16")).strip().lower() or "15,16"
-    if q != "all" and not all(x.strip().isdigit() for x in q.split(",")):
-        raise ValueError("quadrants must be comma-separated numbers (e.g. 15,16) or 'all'")
-    return {"quadrants": q, "download": bool(raw.get("download"))}
-
-
-def _sodir_cache() -> Path:
-    return _home("norway") / "public" / "sodir"
-
-
-def _sim_argv(p: dict) -> list[str]:
-    port = config.STREAM.split(":", 1)[1]
-    return ["simulate-rig", "--connect", f"127.0.0.1:{port}", "--speed", str(p["speed"])] + \
-        (["--from-md", str(p["from_md"])] if p["from_md"] is not None else [])
-
-
+# ---------------------------------------------------------------------------- maintenance jobs (Analytics > Maintenance)
 def _need_kb() -> str | None:
     return None if S.ready else "the knowledge base is not built"
 
 
-def _stream_file() -> bool:
-    return (config.LOGS_DIR / "active_stream.npz").exists()
-
-
-def _reload_model(job: jobs.Job) -> dict:
+def _reload_model(job: Job) -> None:
     S.model = RiskModel.load(config.MODELS_DIR / "risk_model.joblib")
-    return {"message": "Risk model re-trained; new consoles and risk profiles use it."}
+    job.log("Risk model reloaded; new consoles and risk profiles use it.")
 
 
-def _reload_clf(job: jobs.Job) -> dict:
+def _reload_clf(job: Job) -> None:
     S.clf = SentenceClassifier.load(config.MODELS_DIR / "sentence_clf.joblib")
-    return {"message": "Sentence classifier re-fitted; documents ingested from now on use it.",
-            "retrain": S.db.kv_get("classifier_retrain")}
+    job.log("Sentence classifier reloaded; documents ingested from now on use it.")
 
 
-JOB_KINDS = {k.key: k for k in [
-    jobs.Kind("evaluate-live", "Re-run live evaluation",
-              "Replays the active well: alarm-budget sweep and automatic top-picking accuracy (a few minutes).",
-              "office", lambda p: ["evaluate-live"],
-              check=lambda: _need_kb() or (None if _stream_file() else "this dataset has no real-time stream to replay")),
-    jobs.Kind("evaluate-ocr", "Re-score OCR",
-              "Scores scanned-report reading on 12 completion reports as text, standard and poor scans (a few minutes).",
-              "office", lambda p: ["evaluate-ocr"],
-              check=lambda: _need_kb() or ("needs the synthetic Assam dataset" if config.REGION != "assam" else
-                                           None if ocr_status()["available"] else "no OCR engine is installed")),
-    jobs.Kind("retrain-risk", "Retrain risk model",
-              "Re-trains the risk model on the current knowledge base, with leave-wells-out evaluation.",
-              "office", lambda p: ["retrain-risk"], check=_need_kb, after=_reload_model),
-    jobs.Kind("retrain-classifier", "Retrain sentence classifier",
-              "Re-fits the document classifier with every approved and rejected review (active learning).",
-              "office", lambda p: ["retrain-classifier"],
-              check=lambda: _need_kb() or (None if S.db.kv_get("verified_sentences") else
-                                           "no reviews yet: approve or reject items in the review queue first"),
-              after=_reload_clf),
-    jobs.Kind("simulate-rig", "Rig simulator",
-              "Sends the stored active-well stream to NWIS's WITS-0 listener as real rig frames.",
-              "office", _sim_argv, params=_sim_params, exclusive=False,
-              check=lambda: (None if config.STREAM.startswith("wits0-listen:") and _stream_file() else
-                             "start NWIS with NWIS_STREAM=wits0-listen:5501 to receive a simulated rig feed")),
-    _build_kind("build-demo", "assam", "Rebuild demo knowledge base",
-                "Regenerates the synthetic Upper-Assam wells, reports and models from scratch (about 2 minutes; about 10 with OCR installed).",
-                lambda p: ["build-demo"]),
-    _build_kind("build-public", "norway", "Build North Sea real-data knowledge base",
-                "Builds from public Sodir FactPages exports (NLOD 2.0); the download needs internet access.",
-                lambda p: ["build-public", "--quadrants", p["quadrants"], "--from-folder", str(_sodir_cache())]
-                + (["--download"] if p["download"] else []), params=_public_params),
-]}
+# key -> (label, description, reason it cannot run now or None, follow-up in the server after a successful run)
+MAINTENANCE = {
+    "evaluate-ocr": ("Re-score OCR",
+                     "Scores scanned-report reading on 12 completion reports as text, standard and poor scans (a few minutes).",
+                     lambda: _need_kb() or ("needs the synthetic Assam dataset" if config.REGION != "assam" else
+                                            None if ocr_status()["available"] else "no OCR engine is installed"),
+                     None),
+    "retrain-risk": ("Retrain risk model",
+                     "Re-trains the risk model on the current knowledge base, with leave-wells-out evaluation.",
+                     _need_kb, _reload_model),
+    "retrain-classifier": ("Retrain sentence classifier",
+                           "Re-fits the document classifier with every approved and rejected review (active learning).",
+                           lambda: _need_kb() or (None if S.db.kv_get("verified_sentences") else
+                                                  "no reviews yet: approve or reject items in the review queue first"),
+                           _reload_clf),
+}
 
 
-def _job_event(job: jobs.Job, event: str) -> None:
-    if not S.ready:
-        return
-    audit.append_many(S.db, [audit.make_row("job", actor=job.actor,
-                                            payload={"job": job.id, "kind": job.kind, "params": job.params,
-                                                     "status": event, "returncode": job.returncode,
-                                                     "error": job.error})])
+def _job_audit(job: Job, actor: str, event: str) -> None:
+    """Maintenance jobs go into the decision log under the name of whoever started them."""
+    if S.ready:
+        audit.append_many(S.db, [audit.make_row("job", actor=actor, payload={
+            "job": job.id, "kind": job.kind, "status": event, "error": job.error})])
 
 
-JOBS = jobs.JobManager(JOB_KINDS, on_event=_job_event)
+@app.get("/api/analytics/maintenance")
+def maintenance_list():
+    return J([{"key": k, "label": label, "description": desc, "available": check() is None, "reason": check()}
+              for k, (label, desc, check, _after) in MAINTENANCE.items()])
 
 
-@app.get("/api/jobs")
-def jobs_list():
-    return J(JOBS.describe())
+@app.post("/api/analytics/maintenance/{key}")
+def maintenance_start(key: str, request: Request, body: dict | None = None):
+    if key not in MAINTENANCE:
+        raise HTTPException(404, f"unknown maintenance job {key!r}")
+    label, _desc, check, after = MAINTENANCE[key]
+    reason = check()
+    if reason:
+        raise HTTPException(409, reason)
+    actor = _actor(request, (body or {}).get("actor"), default="dashboard")
 
+    def run(job: Job):
+        job.stage = label
+        env = {"NWIS_DATA_DIR": str(config.DATA_DIR), "NWIS_REGION": config.REGION}
+        try:
+            run_process(job, [sys.executable, "-m", "nwis.cli", key], env, cwd=str(config.ROOT / "backend"))
+            if after is not None:   # inside the job, so the server uses the new model before the job shows "done"
+                after(job)
+        except Exception:
+            _job_audit(job, actor, "cancelled" if job.cancel_requested else "failed")
+            raise
+        _job_audit(job, actor, "done")
+        return {"message": f"{label}: done"}
 
-@app.post("/api/jobs")
-def jobs_start(body: dict, request: Request):
-    kind = JOB_KINDS.get(body.get("kind") or "")
-    if kind is None:
-        raise HTTPException(404, f"unknown job {body.get('kind')!r}")
-    user = getattr(request.state, "user", None)
-    if kind.role == "admin" and auth.enabled() and (user is None or user["role"] != "admin"):
-        raise HTTPException(403, "only an admin can rebuild a knowledge base")
-    if kind.key == "build-public" and not body.get("params", {}).get("download") \
-            and not all((_sodir_cache() / f"{t}.csv").exists() for t in _sodir_tables()):
-        raise HTTPException(400, f"no cached Sodir exports in {_sodir_cache()}: tick 'download' (needs internet)")
-    try:
-        job = JOBS.start(kind.key, body.get("params"), _actor(request, body.get("actor"), default="dashboard"))
-    except jobs.JobBusy as e:
-        raise HTTPException(409, str(e))
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    return J(job.to_dict())
-
-
-def _sodir_tables() -> tuple[str, ...]:
-    from ..public.sodir import TABLES
-    return tuple(TABLES)
-
-
-@app.get("/api/jobs/{job_id}")
-def jobs_get(job_id: str, tail: int = 200):
-    job = JOBS.get(job_id)
-    if job is None:
-        raise HTTPException(404, "no such job")
-    return J(job.to_dict(tail=max(0, min(tail, jobs.MAX_LINES))))
-
-
-@app.post("/api/jobs/{job_id}/cancel")
-def jobs_cancel(job_id: str):
-    job = JOBS.cancel(job_id)
-    if job is None:
-        raise HTTPException(404, "no such job")
-    return J(job.to_dict(tail=0))
+    job = _job_or_409(lambda: JOBS.start(key, label, run, exclusive=True))
+    _job_audit(job, actor, "started")
+    return J(job.payload())
 
 
 # ---------------------------------------------------------------------------- live (eRTMAC stream)
@@ -867,11 +795,13 @@ async def live(ws: WebSocket):
     if not (config.LOGS_DIR / "active_stream.npz").exists() or S.kb.active is None:
         # e.g. the real public-data region: there is no public real-time stream to replay
         await ws.send_json({"type": "error", "code": "no_stream",
-                            "message": "No real-time stream in this dataset. Connect a WITS-0 / WITSML feed "
-                                       "(NWIS_STREAM) or use the Assam demo for the replay."})
+                            "message": "No real-time stream in this dataset. An administrator can connect a WITS-0 / "
+                                       "WITSML rig feed under System → Live rig feed, or switch to the Assam demo "
+                                       "for the replay."})
         await ws.close()
         return
-    session = await asyncio.to_thread(LiveSession, S.kb, S.model, S.analogs)
+    # S.analogs may still be building at start-up: wait for it off the event loop, never on it
+    session = await asyncio.to_thread(lambda: LiveSession(S.kb, S.model, S.analogs))
     state = {"playing": True, "speed": 4}
     lock = asyncio.Lock()   # the session is not thread-safe: never step it while a jump/reset is running
 
@@ -988,7 +918,11 @@ async def _live_feed(ws: WebSocket, hub: LiveHub) -> None:
 
     async def writer():
         while True:
-            await send(await q.get())
+            msg = await q.get()
+            if msg.get("type") == "reconnect":   # the feed was replaced from the dashboard
+                await ws.close(code=4000)
+                return
+            await send(msg)
 
     try:
         await asyncio.gather(reader(), writer())
@@ -996,6 +930,399 @@ async def _live_feed(ws: WebSocket, hub: LiveHub) -> None:
         pass
     finally:
         hub.unsubscribe(q)
+
+
+# ---------------------------------------------------------------------------- setup & operations (dashboard-driven)
+def _job_or_409(start):
+    try:
+        return start()
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from None
+
+
+def _after_build(job: Job, switch: bool = False) -> None:
+    """A finished build: load it right away on first run, otherwise swap it in with a restart."""
+    region = job.result["region"]
+    final = ops.data_dir(region)
+    if region == config.REGION and not S.ready:
+        ops.promote_staged(final, job.log)
+        S.load()
+        if not S.ready:
+            raise RuntimeError(f"the new knowledge base did not load: {S.load_error}")
+        asyncio.run_coroutine_threadsafe(S.start_services(), S.loop).result(timeout=60)
+        job.result["restart"] = False
+        job.stage = "Ready"
+        job.log("Knowledge base loaded. NWIS is ready.")
+        return
+    if region != config.REGION:
+        ops.promote_staged(final, job.log)          # not the base in use: swap it in now
+        ops.copy_accounts(config.DB_PATH, final / "nwis.db")
+        if not switch:
+            job.result["restart"] = False
+            job.stage = "Built (not in use)"
+            job.log(f"{ops.DATASETS[region]['label']} is built. Switch to it under System → Dataset.")
+            return
+        config.save_settings({"dataset": region})
+    job.result["restart"] = True
+    job.stage = "Restarting to load it"
+    job.log("Restarting the server to load the new knowledge base…")
+    ops.restart_soon(1.5)
+
+
+def _start_build(body: dict) -> dict:
+    region = (body.get("dataset") or config.REGION).lower()
+    if region not in ops.DATASETS:
+        raise HTTPException(400, f"dataset must be one of {sorted(ops.DATASETS)}")
+    if "dataset" in config.locked() and region != config.REGION:
+        raise HTTPException(409, "the dataset is fixed by an environment variable (NWIS_REGION / NWIS_DATA_DIR)")
+    title = f"Build: {ops.DATASETS[region]['label']}"
+    switch = bool(body.get("switch", True))
+    job = _job_or_409(lambda: JOBS.start(
+        "build", title, lambda j: ops.build_dataset(j, region, str(body.get("quadrants") or "15,16"),
+                                                    bool(body.get("download"))),
+        exclusive=True, on_success=lambda j: _after_build(j, switch)))
+    return job.payload()
+
+
+@app.get("/api/setup/status")
+def setup_status():
+    """Public: what the first-run page needs (is a knowledge base loaded, is one being built)."""
+    busy = JOBS.running_exclusive()
+    datasets = {k: {x: v[x] for x in ("code", "label", "about", "built", "current", "synthetic")} | {"needs": v.get("needs")}
+                for k, v in ops.dataset_status().items()}
+    # before set-up nobody can sign in, so the build log is shown to whoever opens the page; afterwards it is not
+    last = None if S.ready else next((j for j in sorted(JOBS.jobs.values(), key=lambda j: -j.started)
+                                      if j.kind == "build"), None)
+    return J({"ready": S.ready, "load_error": S.load_error, "region": config.REGION, "boot": ops.BOOT_ID,
+              "datasets": datasets, "job": (last or busy).payload() if (last or busy) and not S.ready else None,
+              "building": busy is not None and busy.kind == "build", "ocr": ocr_status(),
+              "stages": {"assam": [x[2] for x in ops.ASSAM_BUILD_STAGES], "norway": [x[2] for x in ops.NORWAY_BUILD_STAGES]},
+              "dataset_locked": "dataset" in config.locked()})
+
+
+@app.post("/api/setup/build")
+def setup_build(body: dict):
+    """First run only (no knowledge base loaded yet); afterwards rebuilding is an administrator action."""
+    if S.ready:
+        raise HTTPException(409, "NWIS is already set up; an administrator can rebuild under System")
+    return J(_start_build(body))
+
+
+@app.get("/api/jobs")
+def jobs_list():
+    return J(JOBS.list())
+
+
+@app.get("/api/jobs/{job_id}")
+def job_detail(job_id: str, since: int = 0):
+    job = JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "job not found (the server may have restarted)")
+    return J(job.payload(since))
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+def job_cancel(job_id: str):
+    return {"ok": JOBS.cancel(job_id)}
+
+
+SETTING_CHOICES = {"top_pick_mode": ("auto", "dtw", "mudlogger"), "llm_backend": ("off", "ollama")}
+
+
+def _stream_payload() -> dict:
+    hub = S.hub
+    return {"spec": config.STREAM, "live": hub is not None, "describe": hub.source.describe() if hub else "stored replay",
+            "stats": hub.source.stats() if hub else None, "in_gap": hub.in_gap if hub else False,
+            "samples": hub.session.n if hub else 0,
+            "bit_md": hub.session.status()["md"] if hub and hub.session.n else None,
+            "listen_port": getattr(hub.source, "bound_port", None) if hub and getattr(hub.source, "mode", "") == "listen" else None}
+
+
+@app.get("/api/admin/status")
+def admin_status():
+    episodes = (S.db.kv_get("active_episodes") or []) if S.ready else []
+    return J({"settings": config.current_settings(), "locked": sorted(config.locked()), "region": config.REGION,
+              "data_dir": str(config.DATA_DIR), "datasets": ops.dataset_status(), "components": ops.component_status(),
+              "stream": _stream_payload(), "simulator": ops.SIM.status(), "episodes": episodes,
+              "supervised": ops.supervised(), "boot": ops.BOOT_ID, "jobs": JOBS.list(),
+              "build": S.db.kv_get("build_info") if S.ready else None,
+              "settings_file": str(config.SETTINGS_PATH)})
+
+
+@app.post("/api/admin/settings")
+async def admin_settings(body: dict):
+    changes = {k: v for k, v in body.items() if k in config.ENV_OF and k not in ("dataset", "stream")}
+    bad = sorted(set(changes) & config.locked())
+    if bad:
+        raise HTTPException(409, f"set by environment variable, cannot change here: {', '.join(bad)}")
+    for k, v in changes.items():
+        if k in SETTING_CHOICES and v not in SETTING_CHOICES[k]:
+            raise HTTPException(400, f"{k} must be one of {SETTING_CHOICES[k]}")
+    if "stream_gap_s" in changes:
+        try:
+            changes["stream_gap_s"] = max(10.0, float(changes["stream_gap_s"]))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "stream_gap_s must be a number of seconds") from None
+    if "auth" in changes:
+        changes["auth"] = bool(changes["auth"])
+    for k in ("ollama_url", "ollama_model", "tile_url", "tile_attribution", "asr_model"):
+        if k in changes:
+            changes[k] = str(changes[k]).strip()
+            if not changes[k]:
+                raise HTTPException(400, f"{k} cannot be empty")
+    attr = {"stream_gap_s": "STREAM_GAP_S", "top_pick_mode": "TOP_PICK_MODE", "llm_backend": "LLM_BACKEND",
+            "ollama_url": "OLLAMA_URL", "ollama_model": "OLLAMA_MODEL", "auth": "AUTH", "tile_url": "TILE_URL",
+            "tile_attribution": "TILE_ATTRIBUTION", "asr_model": "ASR_MODEL"}
+    for k, v in changes.items():
+        setattr(config, attr[k], v)
+    if "stream_gap_s" in changes and S.hub is not None:
+        S.hub.gap_s = changes["stream_gap_s"]
+    if "asr_model" in changes:
+        from ..ingest import voice
+        voice._model = None
+    config.save_settings(changes)
+    return J({"settings": config.current_settings()})
+
+
+@app.post("/api/admin/stream")
+async def admin_stream(body: dict):
+    if "stream" in config.locked():
+        raise HTTPException(409, "the live feed is fixed by the NWIS_STREAM environment variable")
+    spec = str(body.get("spec") or "replay").strip()
+    try:
+        await S.set_stream(spec)
+    except (ValueError, KeyError) as e:
+        raise HTTPException(400, f"invalid feed setting: {e}") from None
+    if S.hub is None:
+        await asyncio.to_thread(ops.SIM.stop)
+    config.save_settings({"stream": spec})
+    return J(_stream_payload())
+
+
+@app.post("/api/admin/simulator/start")
+async def simulator_start(body: dict):
+    """Demo rig: send the stored active-well stream as WITS-0 frames into NWIS's own listener."""
+    kb()
+    if not ops.SIM.available():
+        raise HTTPException(409, "this dataset has no recorded rig stream to transmit (use the Assam demo)")
+    port = int(body.get("port") or 5501)
+    src = S.hub.source if S.hub else None
+    if not (src is not None and getattr(src, "mode", None) == "listen"):
+        if "stream" in config.locked():
+            raise HTTPException(409, "the live feed is fixed by NWIS_STREAM and is not a WITS-0 listener")
+        await S.set_stream(f"wits0-listen:{port}")
+        config.save_settings({"stream": config.STREAM})
+        src = S.hub.source
+        await asyncio.to_thread(src.wait_ready, 5.0)
+    port = src.bound_port or src.port
+    from_md = body.get("from_md")
+    if body.get("episode"):
+        ep = next((e for e in S.db.kv_get("active_episodes") or [] if e["id"] == body["episode"]), None)
+        if ep is None:
+            raise HTTPException(404, "unknown scenario")
+        from_md = max(0.0, float(ep.get("onset_md") or ep["md"]) - 150)
+    speed = float(body["speed"]) if body.get("speed") is not None else 60.0   # 0 = as fast as possible
+    if speed < 0:
+        raise HTTPException(400, "speed must be 0 (as fast as possible) or a positive factor")
+    await asyncio.to_thread(ops.SIM.start, port, speed, float(from_md) if from_md else None)
+    return J({"simulator": ops.SIM.status(), "stream": _stream_payload()})
+
+
+@app.post("/api/admin/simulator/stop")
+async def simulator_stop():
+    await asyncio.to_thread(ops.SIM.stop)
+    return J({"simulator": ops.SIM.status()})
+
+
+@app.post("/api/admin/build")
+def admin_build(body: dict):
+    return J(_start_build(body))
+
+
+@app.post("/api/admin/sodir-csv")
+async def admin_sodir_csv(files: list[UploadFile] = File(...)):
+    """FactPages CSV exports uploaded from the browser (for servers without internet access)."""
+    from ..public import sodir
+    dest = ops.data_dir("norway") / "public" / "sodir"
+    dest.mkdir(parents=True, exist_ok=True)
+    names = []
+    for f in files:
+        name = Path(f.filename or "").name
+        if name.lower().endswith(".csv"):
+            with (dest / name).open("wb") as out:
+                shutil.copyfileobj(f.file, out)
+            names.append(name)
+    have = sorted(p.stem for p in dest.glob("*.csv"))
+    return J({"saved": names, "have": have, "missing": [t for t in sodir.TABLES if t not in have]})
+
+
+@app.post("/api/admin/dataset")
+def admin_dataset(body: dict):
+    region = (body.get("dataset") or "").lower()
+    st = ops.dataset_status()
+    if region not in st:
+        raise HTTPException(400, f"dataset must be one of {sorted(st)}")
+    if "dataset" in config.locked():
+        raise HTTPException(409, "the dataset is fixed by an environment variable (NWIS_REGION / NWIS_DATA_DIR)")
+    if region == config.REGION:
+        return {"ok": True, "restart": False}
+    if not st[region]["built"]:
+        raise HTTPException(409, f"{st[region]['label']} is not built yet")
+    busy = JOBS.running_exclusive()
+    if busy:
+        raise HTTPException(409, f"'{busy.title}' is still running")
+    ops.copy_accounts(config.DB_PATH, ops.data_dir(region) / "nwis.db")
+    config.save_settings({"dataset": region})
+    ops.restart_soon()
+    return {"ok": True, "restart": True}
+
+
+@app.post("/api/admin/restart")
+def admin_restart():
+    busy = JOBS.running_exclusive()
+    if busy:
+        raise HTTPException(409, f"'{busy.title}' is still running")
+    ops.restart_soon()
+    return {"ok": True, "restart": True, "supervised": ops.supervised()}
+
+
+@app.post("/api/admin/install")
+def admin_install(body: dict):
+    name = body.get("component")
+    if name not in ops.COMPONENTS:
+        raise HTTPException(400, f"component must be one of {sorted(ops.COMPONENTS)}")
+    job = _job_or_409(lambda: JOBS.start("install", f"Install {ops.COMPONENTS[name]['label']}",
+                                         lambda j: ops.install_component(j, name), exclusive=True))
+    return J(job.payload())
+
+
+@app.post("/api/admin/llm/test")
+def admin_llm_test(body: dict):
+    import urllib.request
+    url = (body.get("url") or config.OLLAMA_URL).rstrip("/")
+    try:
+        with urllib.request.urlopen(f"{url}/api/tags", timeout=4) as r:
+            models = [m.get("name") for m in json.loads(r.read()).get("models", [])]
+        return {"ok": True, "models": models}
+    except Exception as e:  # noqa: BLE001 - report whatever went wrong to the admin
+        return {"ok": False, "error": str(e)[:200]}
+
+
+UPLOAD_KINDS = (".pdf", ".xml")
+
+
+def _save_uploads(files: list[UploadFile], folder: Path, kinds: tuple[str, ...]) -> list[Path]:
+    """Save uploaded files; a .zip is expanded (only files of the allowed kinds, flattened, no path traversal)."""
+    import zipfile
+    folder.mkdir(parents=True, exist_ok=True)
+    saved: list[Path] = []
+
+    def target(name: str) -> Path:
+        base = Path(name).name or "file"
+        p, i = folder / base, 1
+        while p.exists():
+            p = folder / f"{Path(base).stem}_{i}{Path(base).suffix}"
+            i += 1
+        return p
+
+    for f in files:
+        name = Path(f.filename or "upload").name
+        low = name.lower()
+        if low.endswith(".zip"):
+            tmp = folder / f"_{name}"
+            with tmp.open("wb") as out:
+                shutil.copyfileobj(f.file, out)
+            try:
+                with zipfile.ZipFile(tmp) as z:
+                    for m in z.infolist():
+                        if m.is_dir() or not m.filename.lower().endswith(kinds) or m.file_size > 300 * 2 ** 20:
+                            continue
+                        if Path(m.filename).name.startswith("._"):   # macOS resource forks
+                            continue
+                        dest = target(m.filename)
+                        with z.open(m) as src, dest.open("wb") as out:
+                            shutil.copyfileobj(src, out)
+                        saved.append(dest)
+            except zipfile.BadZipFile:
+                raise HTTPException(400, f"{name} is not a valid zip file") from None
+            finally:
+                tmp.unlink(missing_ok=True)
+        elif low.endswith(kinds):
+            dest = target(name)
+            with dest.open("wb") as out:
+                shutil.copyfileobj(f.file, out)
+            saved.append(dest)
+    return saved
+
+
+@app.post("/api/ingest/batch")
+async def ingest_batch(files: list[UploadFile] = File(...)):
+    """Many reports at once (a folder, several files or a .zip): a background job with per-file results."""
+    kb()
+    folder = config.UPLOADS_DIR / f"batch_{dt.datetime.now():%Y%m%d%H%M%S}"
+    paths = await asyncio.to_thread(_save_uploads, files, folder, UPLOAD_KINDS)
+    if not paths:
+        raise HTTPException(400, "no PDF or WITSML XML files found in the upload")
+
+    def run(job: Job):
+        ing = Ingestor(DB(), S.clf)
+        rows, n = [], len(paths)
+        for i, p in enumerate(paths):
+            job.check_cancel()
+            job.progress, job.stage = i / n, f"{i + 1}/{n} · {p.name}"
+            try:
+                r = ing.ingest_witsml(p, source="upload") if p.suffix.lower() == ".xml" else ing.ingest_pdf(p, source="upload")
+                ev = r.get("events", [])
+                row = {"file": p.name, "kind": r.get("kind"), "well_id": r.get("well_id"), "pages": len(r.get("pages") or []),
+                       "events": len(ev), "review": sum(1 for e in ev if e.get("status") != "auto"),
+                       "lessons": len(r.get("lessons") or []), "warnings": r.get("warnings") or [], "error": None}
+                job.log(f"{p.name}: {row['events']} events ({row['review']} to review), well {row['well_id'] or '?'}")
+            except Exception as e:  # noqa: BLE001 - one bad file must not stop a large import
+                row = {"file": p.name, "error": str(e)[:200]}
+                job.log(f"{p.name}: skipped ({e})")
+            rows.append(row)
+            if (i + 1) % 20 == 0:
+                S.refresh()
+        S.refresh()
+        return {"files": rows, "n_files": n, "events": sum(r.get("events") or 0 for r in rows),
+                "review": sum(r.get("review") or 0 for r in rows), "errors": sum(1 for r in rows if r.get("error"))}
+    return J(JOBS.start("import", f"Import {len(paths)} document(s)", run).payload())
+
+
+@app.post("/api/analytics/evaluate-live")
+def analytics_evaluate_live():
+    kb()
+    if not (config.LOGS_DIR / "active_stream.npz").exists():
+        raise HTTPException(409, "this dataset has no recorded rig stream to replay")
+
+    def run(job: Job):
+        from ..realtime.evaluate import evaluate_live
+        job.stage = "Replaying the active well (alarm-budget sweep, then top picking)"
+        job.log(job.stage)
+        res = evaluate_live(KnowledgeBase(DB()), S.model)
+        for r in res["budget"]["rows"]:
+            job.log(f"nuisance={r['nuisance']} budget={r['budget_per_hour']}: detected {r['detected']}/"
+                    f"{len(r['episodes'])}, false alarms {r['false_alarms']} ({r['false_per_hour']}/h)")
+        return {"computed": res["computed"]}
+    return J(_job_or_409(lambda: JOBS.start("evaluate", "Live alerting evaluation", run, exclusive=True)).payload())
+
+
+@app.post("/api/analytics/validate-volve")
+async def analytics_validate_volve(files: list[UploadFile] = File(...)):
+    """Score report reading on the public Equinor Volve daily drilling reports (XML files or a .zip)."""
+    kb()
+    folder = config.UPLOADS_DIR / f"volve_{dt.datetime.now():%Y%m%d%H%M%S}"
+    paths = await asyncio.to_thread(_save_uploads, files, folder, (".xml",))
+    if not paths:
+        raise HTTPException(400, "no drillReport XML files found in the upload")
+
+    def run(job: Job):
+        from ..validate.volve import run_and_store
+        job.stage = f"Scoring {len(paths)} daily drilling reports"
+        res = run_and_store(DB(), folder, log=job.log)
+        return {"n_wells": res["n_wells"], "n_reports": res["n_reports"], "f1": res["zero_shot"]["f1"]}
+    return J(_job_or_409(lambda: JOBS.start("validate", "Real-data check (Equinor Volve)", run,
+                                            exclusive=True)).payload())
 
 
 # ---------------------------------------------------------------------------- frontend

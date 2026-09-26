@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import { roleLabel, useAuth, type Role, type User } from "../auth";
 import { useApp } from "../context";
+import { useAuth } from "../auth";
 import JobsCard from "../components/JobsCard";
+import { JobView, startJob, uploadJob, useJob, type Job } from "../jobs";
 import { useTip } from "../components/Tip";
 import { HAZARD_COLOR, HAZARD_SHORT, fmt, riskColor } from "../theme";
 
@@ -27,12 +28,12 @@ const METHOD_LABEL: Record<string, string> = {
 
 export default function Analytics() {
   const { fmName, meta } = useApp();
-  const { can, authOn } = useAuth();
+  const { can } = useAuth();
   const [d, setD] = useState<any>(null);
   const [rate, setRate] = useState(18);
   const [avoid, setAvoid] = useState(20);
-  const load = () => { api("/api/analytics").then(setD); };
-  useEffect(load, []);
+  const reload = () => api("/api/analytics").then(setD);
+  useEffect(() => { reload(); }, []);
   if (!d) return <div className="empty">Loading analytics…</div>;
   const inv = d.inventory;
   const rm = d.risk_metrics;
@@ -47,7 +48,7 @@ export default function Analytics() {
       <h2 className="view">Analytics &amp; model evidence</h2>
       <p className="lede">How much knowledge NWIS holds, where NPT comes from, and how well each model does. {meta.synthetic ? "All metrics are on the synthetic Upper-Assam dataset: they validate the pipeline mechanics and must be re-measured on OIL's own reports." : `Metrics on real public data: ${meta.ontology.region?.label}. Incidents come from wellbore history summaries, so they are under-reported compared with daily drilling reports.`}</p>
     </div>
-    <JobsCard onFinished={load} />
+    <JobsCard onFinished={reload} />
     <div className="kpis">
       {[["Offset wells", inv.wells], ["Documents", inv.documents], ["Pages read", inv.pages], ["OCR pages", inv.ocr_pages], ["Events extracted", inv.events],
         ["Lessons learned", inv.lessons], ["Citations", inv.citations], ["Awaiting review", inv.review_open]].map(([k, v]) =>
@@ -118,8 +119,8 @@ export default function Analytics() {
         </>}
       </div>
     </div>
-    {d.live_eval && <LiveEval ev={d.live_eval} />}
-    <PublicEval ev={d.public_eval} />
+    {d.live_eval ? <LiveEval ev={d.live_eval} onUpdated={reload} /> : meta.synthetic && <RerunLive onUpdated={reload} />}
+    <PublicEval ev={d.public_eval} onUpdated={reload} />
     <div className="grid2">
       <div className="card">
         <h3>Decision log <span className="sub">append-only · SHA-256 hash chain</span></h3>
@@ -141,12 +142,11 @@ export default function Analytics() {
           <tbody>{d.feedback.map((f: any, i: number) => <tr key={i}><td>{HAZARD_SHORT[f.hazard] ?? f.hazard}</td><td>{f.useful ? "useful" : "false alarm / not actionable"}</td><td className="num">{f.n}</td></tr>)}</tbody></table>}
     </div>
     </div>
-    {can("admin") && authOn && <UsersCard />}
   </div>;
 }
 
 /** Replay evidence for the live alerting: alarm budget trade-off and automatic top picking. */
-function LiveEval({ ev }: { ev: any }) {
+function LiveEval({ ev, onUpdated }: { ev: any; onUpdated: () => void }) {
   const { fmName } = useApp();
   const rows: any[] = ev.budget.rows;
   const stress = rows.filter((r) => r.nuisance > 0);
@@ -154,7 +154,8 @@ function LiveEval({ ev }: { ev: any }) {
   const dtw = ev.top_picks.dtw, ml = ev.top_picks.mudlogger;
   return <div className="grid2">
     <div className="card">
-      <h3>Alarm budget <span className="sub">replay of the active well · {rows[0]?.hours} h of drilling</span></h3>
+      <h3>Alarm budget <span className="sub">replay of the active well · {rows[0]?.hours} h of drilling{ev.computed ? ` · computed ${ev.computed.replace("T", " ")}` : ""}</span></h3>
+      <RerunLive onUpdated={onUpdated} inline />
       <HBar fmtV={(v) => String(v)} rows={stress.map((r) => ({
         label: r.gated ? `budget ${r.budget_per_hour}/h` : "no budget (all alerts)", value: r.false_alarms,
         color: r.gated ? "#3987e5" : "#9e9e9e", bold: r.budget_per_hour === 1,
@@ -183,15 +184,15 @@ function LiveEval({ ev }: { ev: any }) {
 }
 
 /** Real-data check on the public Equinor Volve reports: zero-shot transfer and the local-adaptation curve. */
-function PublicEval({ ev }: { ev: any }) {
+function PublicEval({ ev, onUpdated }: { ev: any; onUpdated: () => void }) {
   if (!ev) return <div className="card">
     <h3>Real-data check: Equinor Volve (public) <span className="sub">not run yet</span></h3>
     <div className="small">Everything above uses synthetic Assam data. To score NWIS on real drilling text:</div>
     <ol className="small" style={{ margin: "6px 0 0 18px", padding: 0, lineHeight: 1.6 }}>
       <li>Download the Volve daily drilling report XML from Equinor's Volve data-sharing page (you accept the Equinor Open Data Licence there).</li>
-      <li>Run <code>python -m nwis.cli validate-volve &lt;folder&gt;</code> in <code>backend/</code>.</li>
-      <li>Reload this page: zero-shot and locally adapted F1 appear here.</li>
+      <li>Upload the XML files (or the folder, or a .zip of it) below. Scoring runs on this server and the results appear here.</li>
     </ol>
+    <VolveUpload onUpdated={onUpdated} />
     <div className="small muted" style={{ marginTop: 6 }}>NWIS reads only the free text; the operator's own activity codes are the labels, so results are agreement with operator coding.</div>
   </div>;
   const z = ev.zero_shot;
@@ -206,6 +207,7 @@ function PublicEval({ ev }: { ev: any }) {
           note: `held-out wells, ${c.folds.length} folds` })),
       ]} />
       <div className="small muted" style={{ marginTop: 6 }}>Transfer from synthetic Assam reports to a different operator, basin and writing style, then with a few labelled local report-days from other wells. {ev.caveats?.[0]}</div>
+      <VolveUpload onUpdated={onUpdated} again />
     </div>
     <div className="card">
       <h3>Per hazard (zero-shot) <span className="sub">agreement with operator activity codes</span></h3>
@@ -272,35 +274,42 @@ function AuditBrowser({ admin }: { admin: boolean }) {
   </div>;
 }
 
-/** Admin only: who can sign in, and with which role. */
-function UsersCard() {
-  const [users, setUsers] = useState<User[]>([]);
-  const [f, setF] = useState({ username: "", display_name: "", role: "field" as Role, password: "" });
-  const [msg, setMsg] = useState<string | null>(null);
-  const load = () => api<User[]>("/api/users").then(setUsers).catch((e) => setMsg(e.message));
-  useEffect(() => { load(); }, []);
-  const add = async () => {
-    setMsg(null);
-    try {
-      const u = await api<User>("/api/users", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(f) });
-      setMsg(`Added ${u.username} (${roleLabel(u.role)})`);
-      setF({ username: "", display_name: "", role: "field", password: "" });
-      load();
-    } catch (e: any) { setMsg(e.message); }
+/** Re-run the replay evaluation (alarm budget, automatic top picking) on the current knowledge base. */
+function RerunLive({ onUpdated, inline = false }: { onUpdated: () => void; inline?: boolean }) {
+  const [id, setId] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [job] = useJob(id, (j) => { if (j.status === "done") onUpdated(); });
+  const run = async () => { setErr(null); try { setId((await startJob("/api/analytics/evaluate-live")).id); } catch (e: any) { setErr(e.message); } };
+  const body = <div className="col" style={{ gap: 6, marginBottom: inline ? 8 : 0 }}>
+    {(!job || job.status !== "running") && <div className="row" style={{ gap: 8 }}>
+      <button className="btn sm" onClick={run}>↻ Re-run live evaluation</button>
+      <span className="small muted">replays the active well under nuisance stress; takes a few minutes</span></div>}
+    {job && <JobView job={job} compact />}
+    {err && <div className="banner small">{err}</div>}
+  </div>;
+  return inline ? body : <div className="card"><h3>Live alerting evaluation <span className="sub">not computed yet</span></h3>{body}</div>;
+}
+
+/** Upload Volve drillReport XML (files, a folder or a .zip) and score report reading on it. */
+function VolveUpload({ onUpdated, again = false }: { onUpdated: () => void; again?: boolean }) {
+  const [id, setId] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [job] = useJob(id, (j) => { if (j.status === "done") onUpdated(); });
+  const send = async (files: FileList | null) => {
+    if (!files?.length) return;
+    setErr(null);
+    try { setId(((await uploadJob("/api/analytics/validate-volve", [...files].filter((f) => /\.(xml|zip)$/i.test(f.name)))) as Job).id); }
+    catch (e: any) { setErr(e.message); }
   };
-  return <div className="card">
-    <h3>Users &amp; roles <span className="sub">field: live, map, risk, knowledge, memos · office: + ingestion, review, what-if, analytics · admin: + users, log verification</span></h3>
-    <table className="t"><thead><tr><th>Username</th><th>Name</th><th>Role</th></tr></thead>
-      <tbody>{users.map((u) => <tr key={u.username}><td>{u.username}</td><td>{u.display_name}</td><td>{roleLabel(u.role)}</td></tr>)}</tbody></table>
-    <div className="row wrap" style={{ marginTop: 8, gap: 6 }}>
-      <input type="text" placeholder="username" value={f.username} onChange={(e) => setF({ ...f, username: e.target.value })} style={{ width: 120 }} />
-      <input type="text" placeholder="display name" value={f.display_name} onChange={(e) => setF({ ...f, display_name: e.target.value })} style={{ width: 180 }} />
-      <select value={f.role} onChange={(e) => setF({ ...f, role: e.target.value as Role })}>
-        {(["field", "office", "admin"] as Role[]).map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
-      </select>
-      <input type="password" placeholder="password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} style={{ width: 120 }} />
-      <button className="btn sm primary" disabled={!f.username || f.password.length < 4} onClick={add}>Add user</button>
-      {msg && <span className="small muted">{msg}</span>}
-    </div>
+  return <div className="col" style={{ gap: 6, marginTop: 8 }}>
+    {(!job || job.status !== "running") && <div className="row wrap" style={{ gap: 8 }}>
+      <label className="btn sm">{again ? "Score another set…" : "Upload XML files / .zip…"}
+        <input type="file" multiple accept=".xml,.zip" style={{ display: "none" }} onChange={(e) => send(e.target.files)} /></label>
+      <label className="btn sm">Choose a folder…
+        {/* @ts-expect-error non-standard attribute supported by all current browsers */}
+        <input type="file" webkitdirectory="" directory="" multiple style={{ display: "none" }} onChange={(e) => send(e.target.files)} /></label>
+    </div>}
+    {job && <JobView job={job} compact />}
+    {err && <div className="banner small">{err}</div>}
   </div>;
 }

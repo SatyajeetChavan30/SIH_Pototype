@@ -1,4 +1,7 @@
-"""Tests run with sign-in off unless a test turns it on (test_auth.py), so API tests exercise features, not login."""
+"""Tests run with sign-in off unless a test turns it on (test_auth.py), so API tests exercise features, not login.
+Dashboard settings go to a throw-away file so a developer's own nwis_settings.json never changes test results."""
 import os
+import tempfile
 
 os.environ.setdefault("NWIS_AUTH", "off")
+os.environ.setdefault("NWIS_SETTINGS", os.path.join(tempfile.mkdtemp(prefix="nwis-test-"), "settings.json"))

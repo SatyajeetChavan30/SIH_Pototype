@@ -3,6 +3,7 @@ import { OFFICE, roleLabel, useAuth, type Role } from "./auth";
 import { useApp, type View } from "./context";
 import { useLive } from "./live";
 import UploadModal from "./components/UploadModal";
+import { Logo } from "./views/Setup";
 import Analytics from "./views/Analytics";
 import Correlation from "./views/Correlation";
 import Ingestion from "./views/Ingestion";
@@ -11,6 +12,7 @@ import LiveOps from "./views/LiveOps";
 import OffsetMap from "./views/OffsetMap";
 import RiskPlanning from "./views/RiskPlanning";
 import RigSite from "./views/RigSite";
+import System from "./views/System";
 
 const NAV: { v: View; label: string; ico: string; roles?: Role[] }[] = [
   { v: "live", label: "Live Ops", ico: "◉" },
@@ -20,6 +22,7 @@ const NAV: { v: View; label: string; ico: string; roles?: Role[] }[] = [
   { v: "knowledge", label: "Knowledge", ico: "⌕" },
   { v: "ingest", label: "Ingestion", ico: "⇪", roles: OFFICE },
   { v: "analytics", label: "Analytics", ico: "◔", roles: OFFICE },
+  { v: "system", label: "System", ico: "⚙", roles: ["admin"] },
   { v: "rig", label: "Rig-site app", ico: "▣" },
 ];
 
@@ -39,7 +42,7 @@ export default function App() {
   return <div className="shell">
     <header className="topbar">
       <div className="brand">
-        <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden><rect width="32" height="32" rx="7" fill="#000000" /><path d="M16 4 L22 28 H10 Z" fill="none" stroke="#ffffff" strokeWidth="2.5" /><circle cx="16" cy="12" r="3" fill="#d95926" /></svg>
+        <Logo />
         <span>eRTMAC-NWIS <small>Nearby Wells Intelligence System</small></span>
       </div>
       <div className="spacer" />
@@ -70,6 +73,7 @@ export default function App() {
       {view === "knowledge" && <Knowledge />}
       {view === "ingest" && <Ingestion />}
       {view === "analytics" && <Analytics />}
+      {view === "system" && <System />}
     </main>
     {uploadOpen && <UploadModal onClose={() => setUploadOpen(false)} />}
   </div>;

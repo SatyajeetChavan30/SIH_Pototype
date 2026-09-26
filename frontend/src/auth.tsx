@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { api, SIGNED_OUT_EVENT } from "./api";
 import { setActor } from "./live";
+import Setup, { Logo, type SetupStatus } from "./views/Setup";
 
 export type Role = "field" | "office" | "admin";
 export interface User { username: string; display_name: string; role: Role }
@@ -33,9 +34,12 @@ function remember(u: User | null) {
 export function AuthGate({ children }: { children: ReactNode }) {
   const [state, setState] = useState<{ ready: boolean; authOn: boolean; user: User | null; demo: { username: string; role: Role }[] }>(
     { ready: false, authOn: false, user: null, demo: [] });
+  const [setup, setSetup] = useState<SetupStatus | null>(null);
 
   useEffect(() => {
-    api<{ auth: boolean; user: User | null; demo_users: { username: string; role: Role }[] }>("/api/auth/me")
+    // no knowledge base on the server yet: the first-run page builds one (older servers have no /api/setup: skip)
+    api<SetupStatus>("/api/setup/status").then((s) => { if (!s.ready) setSetup(s); }).catch(() => undefined)
+      .then(() => api<{ auth: boolean; user: User | null; demo_users: { username: string; role: Role }[] }>("/api/auth/me"))
       .then((m) => { remember(m.user); setState({ ready: true, authOn: m.auth, user: m.user, demo: m.demo_users }); })
       // server unreachable (rig link down): keep the last signed-in user so the cached rig view still opens
       .catch(() => { const u = cached(); setState({ ready: true, authOn: !!u, user: u, demo: [] }); });
@@ -44,6 +48,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return () => window.removeEventListener(SIGNED_OUT_EVENT, out);
   }, []);
 
+  if (setup) return <Setup initial={setup} />;
   if (!state.ready) return <div className="empty" style={{ padding: 40 }}>Loading NWIS…</div>;
   if (state.authOn && !state.user) return <Login demo={state.demo} onDone={(u) => { remember(u); setState((s) => ({ ...s, user: u })); }} />;
 
@@ -78,7 +83,7 @@ function Login({ demo, onDone }: { demo: { username: string; role: Role }[]; onD
   return <div className="login-page">
     <form className="card login" onSubmit={submit}>
       <div className="brand" style={{ marginBottom: 4 }}>
-        <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden><rect width="32" height="32" rx="7" fill="#000000" /><path d="M16 4 L22 28 H10 Z" fill="none" stroke="#ffffff" strokeWidth="2.5" /><circle cx="16" cy="12" r="3" fill="#d95926" /></svg>
+        <Logo />
         <span>eRTMAC-NWIS <small>Nearby Wells Intelligence System</small></span>
       </div>
       <h2 className="view" style={{ margin: "8px 0 2px" }}>Sign in</h2>

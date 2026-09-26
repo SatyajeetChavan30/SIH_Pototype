@@ -86,17 +86,11 @@ def replay(kb: KnowledgeBase, model=None, budget: float | None = 2.0, nuisance: 
 def top_pick_eval(kb: KnowledgeBase, model=None) -> dict:
     """Accuracy of fully automatic (DTW-only) top picks vs the hidden truth, and whether the live
     look-ahead still catches every episode when re-anchoring relies on DTW alone."""
-    from .. import config
     from .toppick import pick_errors
     truth = kb.db.kv_get("active_truth_tops", {})
     out = {}
     for mode in ("dtw", "mudlogger"):
-        old = config.TOP_PICK_MODE
-        config.TOP_PICK_MODE = mode
-        try:
-            s = LiveSession(kb, model, None)
-        finally:
-            config.TOP_PICK_MODE = old
+        s = LiveSession(kb, model, None, top_mode=mode)
         opened: dict[str, dict] = {}
         while True:
             r = s.step(200)
