@@ -52,7 +52,10 @@ DEFAULT_MW_PPG = 9.0             # only when a log carries no mud weight at all 
 # used only when that table is neither cached nor downloadable.
 VOLVE_WELLHEAD = (58.4416, 1.8875)
 DEV_TABLE = "wellbore_development_all"
-LEAD_S = 1800.0                  # a scenario jump starts 30 min before the operator-coded incident
+PLAUSIBLE = {"mw": (7.0, 22.0), "ecd": (7.0, 22.0), "gr": (0.0, 400.0), "spp": (0.0, 10000.0),
+             "hookload": (0.0, 2000.0), "flow_out": (0.0, 200.0)}   # engine units: ppg, API, psi, klbs, %
+MAX_STEP_M = 5.0                # a hole-depth jump larger than this within 30 s is a depth reset, not drilling
+LEAD_S = 1800.0                 # a scenario jump starts 30 min before the operator-coded incident
 TAIL_S = 1800.0                  # and the window keeps 30 min after it
 
 
@@ -137,6 +140,15 @@ def _usable(lg: dict) -> bool:
     return timed and bool(ch & {"md", "hole_depth"}) and len(ch & set(DRILLING)) >= 3
 
 
+def _span_has(lg: dict, when: dt.datetime) -> bool:
+    try:
+        a = dt.datetime.fromisoformat(lg["start"].replace("Z", "+00:00"))
+        b = dt.datetime.fromisoformat(lg["end"].replace("Z", "+00:00"))
+    except (AttributeError, ValueError):
+        return False
+    return a <= when <= b
+
+
 def _days(lg: dict) -> float:
     try:
         a = dt.datetime.fromisoformat(lg["start"].replace("Z", "+00:00"))
@@ -153,69 +165,79 @@ def rank(inv: dict[str, dict]) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------------------------- parse
-def _series(files: list[str], log=print) -> dict[str, tuple[np.ndarray, np.ndarray]]:
-    """channel -> (epoch seconds, values) merged over all chunk files, in engine units."""
-    acc: dict[str, list[tuple[float, float]]] = {}
+def _binned(files: list[str], log=print) -> tuple[float, dict[str, np.ndarray]]:
+    """Every channel resampled onto one STEP_S grid (bin means; NaN where a channel has no sample).
+
+    Real Volve wellbores hold around a gigabyte of XML (months of 1-10 s samples), so each chunk file is reduced
+    to 30 s bin sums as soon as it is parsed; only those (a few percent of the raw rows) are kept in memory."""
+    acc: dict[str, list[tuple[np.ndarray, np.ndarray, np.ndarray]]] = {}
     for i, f in enumerate(files):
         try:
             rows = parse_log(Path(f).read_bytes())
         except Exception as e:  # noqa: BLE001 - one malformed chunk must not stop the import
             log(f"  skipped {Path(f).name}: {e}")
             continue
+        cols: dict[str, tuple[list[float], list[float]]] = {}
         for r in rows:
             t = r.get("t_epoch")
             if t is None:
                 continue
             for k, v in r.items():
                 if k != "t_epoch":
-                    acc.setdefault(k, []).append((t, v))
-        if (i + 1) % 200 == 0:
+                    ts, vs = cols.setdefault(k, ([], []))
+                    ts.append(t)
+                    vs.append(v)
+        for k, (ts, vs) in cols.items():
+            b = np.floor(np.asarray(ts) / STEP_S).astype(np.int64)
+            u, inv = np.unique(b, return_inverse=True)
+            acc.setdefault(k, []).append((u, np.bincount(inv, weights=np.asarray(vs)), np.bincount(inv)))
+        if (i + 1) % 25 == 0:
             log(f"  parsed {i + 1}/{len(files)} files")
-    out = {}
-    for k, pts in acc.items():
-        a = np.array(pts, dtype=float)
-        a = a[np.argsort(a[:, 0], kind="stable")]
-        out[k] = (a[:, 0], a[:, 1])
-    return out
-
-
-def _grid(series: dict[str, tuple[np.ndarray, np.ndarray]]) -> tuple[float, dict[str, np.ndarray]]:
-    """Resample every channel to one STEP_S grid (bin means; NaN where a channel has no sample)."""
-    t0 = min(float(t[0]) for t, _ in series.values())
-    t1 = max(float(t[-1]) for t, _ in series.values())
-    n = int((t1 - t0) // STEP_S) + 1
+    if not acc:
+        return 0.0, {}
+    b0 = min(int(p[0][0]) for parts in acc.values() for p in parts)
+    b1 = max(int(p[0][-1]) for parts in acc.values() for p in parts)
+    n = b1 - b0 + 1
     grid = {}
-    for k, (t, v) in series.items():
-        idx = ((t - t0) // STEP_S).astype(int)
-        s = np.bincount(idx, weights=v, minlength=n)
-        c = np.bincount(idx, minlength=n)
+    for k, parts in acc.items():
+        idx = np.concatenate([u for u, _, _ in parts]) - b0
+        s = np.bincount(idx, weights=np.concatenate([x for _, x, _ in parts]), minlength=n)
+        c = np.bincount(idx, weights=np.concatenate([x for _, _, x in parts]), minlength=n)
         with np.errstate(invalid="ignore", divide="ignore"):
             grid[k] = np.where(c > 0, s / np.maximum(c, 1), np.nan)
-    return t0, grid
+    return b0 * STEP_S, grid
 
 
 def _pick_window(g: dict[str, np.ndarray], n_win: int, incident_idx: list[int] | None = None) -> tuple[int, int, int]:
-    """Start/end of the window with the most drilling samples (bit depth + ROP, WOB, SPP and flow present).
+    """Start/end of the window that drills the most new hole while ROP, WOB, SPP and flow are all recorded.
 
-    Each operator-coded incident that starts inside a window, with LEAD_S of drilling before it and TAIL_S after,
-    is worth a full window of drilling, so a replay that contains real problems always wins."""
+    Score = metres of new hole (hole depth rising, steps over MAX_STEP_M ignored as depth resets) plus a small
+    credit per drilling sample. Each operator-coded incident that starts inside a window, with LEAD_S of data
+    before it and TAIL_S after, is worth far more than any amount of drilling, so a replay with real problems wins."""
     n = len(next(iter(g.values())))
     nan = np.full(n, np.nan)
     depth = g.get("md", g.get("hole_depth", nan))
     rop, wob, spp, flow = (g.get(k, nan) for k in ("rop", "wob", "spp", "flow_in"))
     drilling = np.isfinite(depth) & (np.nan_to_num(rop) > 0.5) & (np.nan_to_num(flow) > 100) & np.isfinite(wob) \
         & np.isfinite(spp)
+    if "flow_out" in g:     # returns to the rig: skips riserless top hole (seawater, no returns), where loss alarms are meaningless
+        drilling &= np.nan_to_num(g["flow_out"]) > 5
     if n <= n_win:
         return 0, n, int(drilling.sum())
+    hole =_fill(g.get("hole_depth", depth), 0.0)
+    step = np.diff(hole, prepend=hole[0])
+    new_hole = np.where(drilling & (step > 0) & (step < MAX_STEP_M), step, 0.0)
     c = np.concatenate([[0], np.cumsum(drilling)])
-    score = (c[n_win:] - c[:-n_win]).astype(float)
+    m = np.concatenate([[0.0], np.cumsum(new_hole)])
+    score = (m[n_win:] - m[:-n_win]) + 0.01 * (c[n_win:] - c[:-n_win])
     lead, tail = int(LEAD_S // STEP_S), int(TAIL_S // STEP_S)
     bonus = np.zeros(len(score) + 1)
+    big = 10.0 * (float(np.max(score)) + n_win)
     for k in incident_idx or []:
         lo, hi = max(k + tail - n_win + 1, 0), min(k - lead, len(score) - 1)   # window starts that contain k
         if lo <= hi:
-            bonus[lo] += n_win
-            bonus[hi + 1] -= n_win
+            bonus[lo] += big
+            bonus[hi + 1] -= big
     score += np.cumsum(bonus)[:-1]
     i = int(np.argmax(score))
     return i, i + n_win, int(c[i + n_win] - c[i])
@@ -357,11 +379,12 @@ def _episodes(incs: list[dict], t0: float, i0: int, i1: int, md: np.ndarray) -> 
 
 
 def _hole_from_names(names: list[str]) -> str | None:
-    """'MWD ... Real Time Data 12.25in - MD Log' -> '12-1/4"' (the bit size for the d-exponent)."""
+    """'12 1/4in Section - Time Log' / '8 1/2 in Section' / '26in' / '12.25in' -> '12-1/4"' (bit size for the d-exponent)."""
     for nm in names:
-        m = re.search(r"(\d{1,2}(?:[.,]\d+)?)\s*(?:in\b|\")", nm or "", re.I)
+        m = re.search(r"(?<![\d/])(\d{1,2})(?:[.,](\d+)|\s+(\d)/(\d))?\s*(?:in\b|\")", nm or "", re.I)
         if m:
-            x = float(m.group(1).replace(",", "."))
+            x = float(m.group(1)) + (float("0." + m.group(2)) if m.group(2) else
+                                     float(m.group(3)) / float(m.group(4)) if m.group(3) else 0.0)
             whole, frac = int(x), x - int(x)
             for num, den in ((1, 8), (1, 4), (3, 8), (1, 2), (5, 8), (3, 4), (7, 8)):
                 if abs(frac - num / den) < 0.02:
@@ -399,16 +422,18 @@ def convert(root: Path | str, wellbore: str | None = None, hours: float = 12.0, 
     logs = [lg for lg in rec["logs"] if _usable(lg)]
     files = [f for lg in logs for f in sorted(lg["files"])]
     log(f"  {wb}: reading {len(files)} files from {len(logs)} time logs")
-    series = _series(files, log=log)
-    if not series or not ({"md", "hole_depth"} & set(series)):
+    t0, g = _binned(files, log=log)
+    if not g or not ({"md", "hole_depth"} & set(g)):
         raise SystemExit(f"{wb}: the logs carry no bit or hole depth")
-    t0, g = _grid(series)
     n_win = max(int(hours * 3600 / STEP_S), 60)
     i0, i1, n_drill = _pick_window(g, n_win, [int((x["t_start"] - t0) // STEP_S) for x in wb_incs])
     if n_drill < 30:
         raise SystemExit(f"{wb}: no stretch with ROP, WOB, pump pressure and flow recorded together; try another "
                          f"wellbore ({', '.join(r['wellbore'] for r in ranked[:5])})")
     w = {k: v[i0:i1] for k, v in g.items()}
+    for k, (lo, hi) in PLAUSIBLE.items():    # physically impossible readings are dropouts: treat them as missing
+        if k in w:
+            w[k] = np.where((w[k] >= lo) & (w[k] <= hi), w[k], np.nan)
     n = i1 - i0
     nan = np.full(n, np.nan)
     missing = sorted(k for k in ("md", "rop", "wob", "rpm", "torque", "spp", "flow_in", "flow_out", "pit", "hookload",
@@ -419,8 +444,9 @@ def convert(root: Path | str, wellbore: str | None = None, hours: float = 12.0, 
     for k, d in (("rop", 0.0), ("wob", 0.0), ("rpm", 0.0), ("torque", 0.0), ("spp", 0.0), ("flow_in", 0.0),
                  ("flow_out", 100.0), ("pit", 0.0), ("hookload", 0.0), ("gas", 0.0), ("gr", 0.0)):
         s[k] = _fill(w.get(k, nan), d)
-    s["rop"] = np.clip(s["rop"], 0, 200)
+    s["rop"] = np.clip(s["rop"], 0, 200)          # sensor glitches (negative ROP/torque, WOB spikes) seen in Volve
     s["wob"] = np.clip(s["wob"], 0, 150)
+    s["torque"] = np.clip(s["torque"], 0, None)
     s["mw"] = _fill(w.get("mw", nan), DEFAULT_MW_PPG)
     s["ecd"] = _fill(w["ecd"], 0.0) if np.isfinite(w.get("ecd", nan)).any() else s["mw"] + ECD_MARGIN_PPG
 
@@ -431,7 +457,10 @@ def convert(root: Path | str, wellbore: str | None = None, hours: float = 12.0, 
         log(f"  {wb}: no WITSML trajectory found; TVD = MD (vertical assumption)")
         s["tvd"] = s["md"].copy()
 
-    hole_size = _hole_from_names([lg["name"] for lg in rec["logs"]]) or '8-1/2"'
+    # bit size: from the section log ("12 1/4in Section - Time Log") whose time span covers the replay window
+    mid = dt.datetime.fromtimestamp(t0 + (i0 + i1) / 2 * STEP_S, dt.timezone.utc)
+    covering = [lg["name"] for lg in logs if _span_has(lg, mid)]
+    hole_size = _hole_from_names(covering) or _hole_from_names([lg["name"] for lg in rec["logs"]]) or '8-1/2"'
     bit_in = _hole_in(hole_size)
     on_bottom = (s["rop"] > 0.2) | (hole - md < 1.0)
     s["state"] = np.where((s["flow_in"] > 50) & on_bottom, 0.0, 1.0)     # same rule as LiveSession.ingest

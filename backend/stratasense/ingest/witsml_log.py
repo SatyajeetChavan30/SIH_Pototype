@@ -31,9 +31,9 @@ DEFAULT_MNEMONICS = {
     "MFOP": "flow_out", "FLOWOUTP": "flow_out",
     "TFLO": "flow_in", "MFIA": "flow_in",
     "MDIA": "mw", "MWIN": "mw", "MWTI": "mw", "MDOA": "mw",
-    "ECDT": "ecd", "ECD": "ecd", "ECD_MWD": "ecd",
+    "ECDT": "ecd", "ECD": "ecd", "ECD_MWD": "ecd", "ECD_ARC_RT": "ecd", "ECD_ECO_RT": "ecd",
     "GASA": "gas", "TGAS": "gas",
-    "GRA": "gr", "GR": "gr", "GRM1": "gr",
+    "GRA": "gr", "GR": "gr", "GRM1": "gr", "ARC_GR_RT": "gr", "GRMA_ECO_RT": "gr",
 }
 FT_TO_M = 0.3048
 NULL_VALUES = (-999.25, -9999.0)   # WITSML's customary absent-value markers, used when a log declares none
