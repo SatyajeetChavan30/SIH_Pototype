@@ -47,6 +47,10 @@ def main() -> None:
     vs.add_argument("--list", action="store_true", help="only list the wellbores found")
     vs.add_argument("--ddr", default=None, help="folder of Volve daily drilling report XML: its operator-coded "
                                                 "incidents become the Live Ops scenarios")
+    vs.add_argument("--all", action="store_true", help="import every usable wellbore: the others become offset wells "
+                                                       "with real logs, casing and picked tops")
+    vs.add_argument("--picks", default=None, help="Volve Well_picks_Volve_v1.dat: real formation tops")
+    vs.add_argument("--active", default=None, help="with --all: the wellbore Live Ops replays (default: most incidents)")
     vv = sub.add_parser("validate-volve", help="score StrataSense on the public Equinor Volve DDR XML (download it first)")
     vv.add_argument("folder", help="folder containing Volve drillReport *.xml (searched recursively)")
     vv.add_argument("--limit", type=int, default=None, help="only read this many XML files")
@@ -103,7 +107,10 @@ def main() -> None:
         if REGION != "norway" and not a.list:
             raise SystemExit("The Volve stream belongs to the North Sea dataset: run with STRATASENSE_REGION=norway "
                              "(and STRATASENSE_DATA_DIR=data_norway), or switch to it in the dashboard first.")
-        res = volve.import_stream(a.folder, a.wellbore, a.hours, a.list, a.ddr)
+        if a.all and not a.list:
+            res = volve.import_all(a.folder, a.ddr, a.picks, a.active or a.wellbore, a.hours)
+        else:
+            res = volve.import_stream(a.folder, a.wellbore, a.hours, a.list, a.ddr)
         print(json.dumps(res, indent=1, default=str))
         if not a.list:
             print(volve.ATTRIBUTION)

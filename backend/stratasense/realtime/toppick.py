@@ -102,7 +102,7 @@ class DTWTopPicker:
         if refs is not None:
             return
         for w, d in kb.nearby(lat, lon, 25.0, exclude):
-            p = config.LOGS_DIR / f"{w.id}.npz"
+            p = config.log_path(w.id)
             if not p.exists() or not w.tops_tvd:
                 continue
             z = np.load(p)

@@ -1206,6 +1206,9 @@ def admin_volve_scan(body: dict):
 def admin_volve_import(body: dict):
     folder = _existing_dir(body.get("folder"), "WITSML")
     ddr = _existing_dir(body["ddr_folder"], "Drilling report") if body.get("ddr_folder") else None
+    picks = str(body.get("picks") or "").strip().strip('"') or None
+    if picks and not Path(picks).is_file():
+        raise HTTPException(400, f"picks file not found on this server: {picks!r}")
     hours = float(body.get("hours") or 12.0)
     if not 1 <= hours <= 72:
         raise HTTPException(400, "hours must be between 1 and 72")
@@ -1219,8 +1222,30 @@ def admin_volve_import(body: dict):
             ops.restart_soon(1.5)
     return J(_job_or_409(lambda: JOBS.start(
         "volve", "Import Volve rig stream",
-        lambda job: ops.import_volve(job, folder, ddr, body.get("wellbore") or None, hours),
+        lambda job: ops.import_volve(job, folder, ddr, body.get("wellbore") or None, hours,
+                                     bool(body.get("all")), picks),
         exclusive=True, on_success=done)).payload())
+
+
+@app.post("/api/admin/volve/activate")
+def admin_volve_activate(body: dict):
+    """Replay another imported Volve wellbore in Live Ops (no re-parsing: its stored artifact is re-applied)."""
+    from ..public import volve
+    wid = str(body.get("wellbore") or "")
+    norway = ops.data_dir("norway")
+    try:
+        volve.set_active(wid, norway)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+    db = DB(norway / config.DB_NAME)
+    try:
+        volve.apply(db, norway)
+    finally:
+        db.close()
+    restart = config.REGION == "norway"
+    if restart:
+        ops.restart_soon(1.0)
+    return J({"ok": True, "active": wid, "restart": restart})
 
 
 @app.post("/api/admin/volve/upload")

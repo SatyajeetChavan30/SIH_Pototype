@@ -203,7 +203,7 @@ def build(fresh: bool = True, eval_wells: int = 14) -> dict:
     log("writing drilling-parameter logs + active-well stream")
     lrng = np.random.default_rng(config.SEED + 1)
     for w in world.wells:
-        np.savez_compressed(config.LOGS_DIR / f"{w.id}.npz", **logs_gen.offset_logs(lrng, w))
+        np.savez_compressed(config.log_path(w.id), **logs_gen.offset_logs(lrng, w))
     stream, episodes = logs_gen.active_stream(np.random.default_rng(config.SEED + 2), world.active)
     np.savez_compressed(config.LOGS_DIR / "active_stream.npz", **stream)
     db.kv_set("active_episodes", episodes)

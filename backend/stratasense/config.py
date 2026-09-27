@@ -73,13 +73,19 @@ def locked() -> set[str]:
     return {k for k, env in ENV_OF.items() if env in os.environ} | ({"dataset"} if "STRATASENSE_DATA_DIR" in os.environ else set())
 
 
-# Stratigraphic region (see domain/ontology.py): "assam" = synthetic demo, "norway" = real public Sodir data.
-# Each region has its own data folder, because tops and models are region-specific.
-REGION = _get("dataset", "assam").lower()
-
-
 def data_dir_for(region: str) -> Path:
     return ROOT / ("data" if region == "assam" else f"data_{region}")
+
+
+# Stratigraphic region (see domain/ontology.py): "assam" = synthetic demo, "norway" = real public data (Sodir wells,
+# Equinor Volve rig data). Each region has its own data folder, because tops and models are region-specific.
+# StrataSense opens on the real North Sea data once it has been built; the synthetic Assam demo is one switch away.
+REGION = _get("dataset", "norway" if (data_dir_for("norway") / DB_NAME).exists() else "assam").lower()
+
+
+def log_path(well_id: str) -> Path:
+    """Depth-indexed drilling log of an offset well; public well names contain '/' (e.g. 15/9-F-12)."""
+    return LOGS_DIR / f"{str(well_id).replace('/', '_')}.npz"
 
 
 DATA_DIR = Path(os.environ.get("STRATASENSE_DATA_DIR", data_dir_for(REGION)))

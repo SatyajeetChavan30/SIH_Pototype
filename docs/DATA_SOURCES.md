@@ -36,64 +36,85 @@ The problem statement lists nine data sources "available within OIL". All of the
 
 ### Build the real-data version (Norwegian North Sea)
 
-In the dashboard, open **System → Dataset** (admin), set the quadrants, tick *download from factpages.sodir.no* and click **Build North Sea knowledge base**. The five FactPages CSV exports (tens of MB) are fetched once and kept for offline rebuilds. A server without internet can take the CSV files through the upload box on the same card. When the build finishes StrataSense switches to it. **Switch to this** on either dataset, or the **Synthetic · Assam | Real · North Sea** switch in the header, moves back and forth; the server restarts on the other knowledge base. With no rig stream imported, the switch opens the Offset Map and the header reads "no real-time stream in this dataset".
+StrataSense opens on this dataset once it is built. The synthetic Assam demo stays one click away: the **Synthetic · Assam | Real · North Sea** switch in the header (admins), or **System → Dataset**. Switching restarts the server on the other knowledge base.
+
+In the dashboard, open **System → Dataset** (admin), set the quadrants (`all` = the whole Norwegian North Sea), tick *download from factpages.sodir.no* and click **Build North Sea knowledge base**. The FactPages CSV exports (tens of MB) are fetched once and kept for offline rebuilds. A server without internet can take the CSV files through the upload box on the same card.
 
 For scripting, the same from a terminal:
 ```bash
 cd backend
-STRATASENSE_REGION=norway STRATASENSE_DATA_DIR=../data_norway python -m stratasense.cli build-public --download --quadrants 15,16
+STRATASENSE_REGION=norway STRATASENSE_DATA_DIR=../data_norway python -m stratasense.cli build-public --download --quadrants all
 ```
 
+What the current build holds (whole North Sea, 27 Sep 2026):
+
+| | Count | Source |
+|---|---|---|
+| Near-vertical exploration wellbores | 1,024 (217 fields and discoveries) | Sodir FactPages |
+| Group-level formation tops | 6,331 | Sodir FactPages |
+| Wellbore histories read by the NLP pipeline | 999, giving 658 incident events | Sodir FactPages |
+| Volve development wellbores with real drilling logs | 7 (15/9-F-4, F-7, F-9 A, F-10, F-12, F-14, F-15) | Equinor Volve (below) |
+| Their real formation tops | 35 | Volve well picks |
+| Their daily drilling reports read by the NLP pipeline | 636 report-days, giving 537 events | Volve DDR XML |
+
 - **Region.** The North Sea dataset switches the stratigraphy to North Sea **groups** (Nordland … Hegre). Well-known formation names map to their group, e.g. Lista → Rogaland and Draupne → Viking.
-- **Area.** Quadrants `15,16` are the Sleipner / Volve / Utsira High area. Use `all` for the whole North Sea.
+- **ECD.** Sodir publishes mud weight but not ECD. ECD is set to mud weight + **0.42 ppg**, the median ECD − MW measured while drilling in the Volve depth logs (1,845 samples; by hole: 17½″ 0.24, 12¼″ 0.21, 8½″ 0.63 ppg). Without the Volve import it falls back to an assumed 0.3 ppg.
+- **Report reader.** When the Volve reports are imported, the sentence classifier is refitted on the synthetic training set plus 21,329 real Volve report sentences labelled by the operator's own activity codes. The reports of the replayed well (F-14) are held out.
 - **Offline copies.** Upload the CSVs in the dashboard (or pass `--from-folder DIR` on the command line) instead of downloading.
 - **Required attribution:** *Contains data under the Norwegian licence for Open Government data (NLOD) distributed by the Norwegian Offshore Directorate.*
 
 Limits, stated plainly:
-- Only near-vertical exploration wells are used (maximum inclination ≤ 15°), so MD is treated as TVD.
-- ECD is not published, so it is set to mud weight + 0.3 ppg.
-- The histories are summaries, so incidents are under-reported compared with DDRs.
-- Sodir has no real-time data. Live Ops needs the Volve stream below; without it, Live Ops shows "No real-time stream".
+- Only near-vertical exploration wells are used from Sodir (maximum inclination ≤ 15°), so their MD is treated as TVD. The Volve wells use their real WITSML surveys.
+- The Sodir histories are summaries, so incidents are under-reported compared with DDRs. The risk model's pooled AUC is 0.69 against 0.59 for the base rate and 0.55 for "look at the nearest well": better, but still modest. The ML model on its own (0.38) is worse than the base rate, and the blend relies on offset evidence.
+- The Sodir wells have no public well logs, so Correlation, gamma-ray top picking and analog matching use the Volve wells' logs only.
 - North Sea geology is not Assam. This checks that StrataSense works on real records; it does not measure accuracy for OIL.
 
-### Real rig stream for Live Ops: Equinor Volve real-time WITSML
+### Real rig data: Equinor Volve (logs, casing, picks, daily reports)
 
-Equinor published the real-time surface-sensor logs of the Volve development wells (block 15/9, inside quadrant 15 above). `import-volve-stream` turns one wellbore of it into the Live Ops replay of the North Sea dataset. The rig simulator can then also send it as WITS-0 frames.
+Equinor published the Volve field's data (block 15/9, inside quadrant 15). StrataSense uses four parts of it:
 
-**Status:** the importer is tested on generated files in the Volve format. It has not yet been run on the real download, which may still need channel-name mapping fixes.
+| Volve file | What it gives StrataSense |
+|---|---|
+| `WITSML Realtime drilling data` (2.5 GB zip, 26 wellbore folders) | Time logs → the Live Ops stream. Depth-indexed section logs ("12 1/4in Section - MD Log") → offset logs for Correlation, DTW and analogs. Surveys (`trajectory`) → TVD. Casing strings (`wbGeometry`) → hole sections |
+| `Geophysical_Interpretations/Wells/Well_picks_Volve_v1.dat` (75 KB) | Real formation tops of the Volve wells, and of Sodir wells 15/9-11 and 15/9-17 |
+| `Well_technical_data/Daily Drilling Report - XML Version` (1,759 files, 25 MB) | Cited report documents and events for each Volve well; operator-coded incidents; real-text training for the report reader |
+| Sodir `wellbore_development_all.csv` | Wellhead position, TD and dates of each Volve wellbore |
 
-1. **Get the data.** Go to https://www.equinor.com/energy/volve-data-sharing, then Databricks Marketplace, then **Volve Data Village**, then **Get instant access**. You need a free Databricks account, and access can take up to an hour to appear.
-   - Download the folder **`WITSML Realtime drilling data`** (about 2.8 GB zipped, 26 wellbore folders such as `Norway-StatoilHydro-15_$47$_9-F-14`). One wellbore folder is enough.
-   - Optional, for real incidents: download the daily drilling reports (WITSML `drillReport` XML) from **`Well_technical_data`**.
+1. **Get the data.** Go to https://www.equinor.com/energy/volve-data-sharing, then Databricks Marketplace, then **Volve Data Village**, then **Get instant access**. You need a free Databricks account, and access can take up to an hour to appear. Then:
+   - Download **`volvezipfiles/Volve_WITSML Realtime drilling data.zip`** and unzip it. Use the zip: in the unzipped `volve` volume the log folders hold only index files.
+   - With the Databricks CLI, copy `volve/Geophysical_Interpretations/Wells/Well_picks_Volve_v1.dat` and the folder `volve/Well_technical_data/Daily Drilling Report - XML Version`.
 2. **Import it in the dashboard:** go to **System → Dataset** and open the **Real rig stream for Live Ops: Equinor Volve** block on the North Sea card.
-   - Enter the folder paths on the server, or upload a .zip of each. Uploads are unpacked into `volve_raw/`, which is gitignored.
-   - Click **Scan folder**, pick the wellbore and the replay length, then click **Import Volve stream**.
-   - The import runs as a background job with progress. When it finishes, the server restarts if the North Sea dataset is in use.
+   - Enter the WITSML folder, the reports folder and the picks file (paths on the server), or upload a .zip. Uploads are unpacked into `volve_raw/`, which is gitignored.
+   - Tick **import every usable wellbore** and click **Import Volve stream**. The import runs as a background job with progress; the server restarts if the North Sea dataset is in use.
+   - **Replay this well** switches which imported wellbore Live Ops replays, without re-reading the export.
 3. **Or from a terminal:**
    ```bash
    cd backend
-   STRATASENSE_REGION=norway STRATASENSE_DATA_DIR=../data_norway python -m stratasense.cli import-volve-stream "/path/to/WITSML Realtime drilling data" --list
-   STRATASENSE_REGION=norway STRATASENSE_DATA_DIR=../data_norway python -m stratasense.cli import-volve-stream "/path/to/WITSML Realtime drilling data" --wellbore "15/9-F-14" --hours 12 --ddr "/path/to/drilling reports"
+   STRATASENSE_REGION=norway STRATASENSE_DATA_DIR=../data_norway python -m stratasense.cli import-volve-stream "D:/Volve/WITSML Realtime drilling data" --all --ddr "D:/Volve/DDR" --picks "D:/Volve/picks/Well_picks_Volve_v1.dat" --active 15/9-F-14
    ```
-   - Without `--wellbore`, the command picks a wellbore that has coded incidents, or else the one with the most drilling time logs.
-   - With `--ddr`, the operator's coded interruptions (lost circulation, stuck pipe, well control, fishing, tight hole) become Live Ops scenarios **V1, V2…**.
-     - The replay window is chosen to contain them, with 30 min before and after each.
-     - A jump starts 30 min before the incident.
-     - The alarm-budget evaluation scores alerts from 30 min before to 10 min after each incident.
-   - It reads the time-indexed logs and converts units to the ones the detectors use (kkgf → klbf, kN·m → kft·lbf, kPa → psi, L/min → gpm, m³ → bbl, g/cm³ → ppg). It drops the `-999.25` nulls.
-   - It resamples to 30 s and keeps the most drilling-active window of `--hours`.
-   - It adds the wellbore as the active well. Its wellhead position, TD and dates come from Sodir's `wellbore_development_all` table, downloaded once and cached.
-4. **Restart the server** after a terminal import (System → Restart, or switch datasets) so it loads the new stream.
+   The whole folder takes about 30 minutes, most of it reading 6,800 log-file headers. Pointing it at a single wellbore folder (without `--all`) takes about 80 seconds.
+4. **Rebuild** the North Sea knowledge base, so the report reader is refitted and the risk model is retrained with the new wells. Every rebuild re-applies the imported Volve data from `data_norway/public/volve/` (a few MB; the raw export is read only once).
 
-The converted window is stored in `data_norway/public/volve/` (a few hundred kB), and every North Sea rebuild re-applies it. The raw export is read only once. `data_norway/` is gitignored, so none of this data is committed.
+What the import does:
+- **Units and cleaning.** It converts units to the ones the detectors use (kkgf → klbf, kN·m → kft·lbf, kPa → psi, L/min → gpm, m³ → bbl, g/cm³ → ppg). It drops the `-999.25` nulls and physically impossible readings (e.g. an ECD of 258 ppg).
+- **Replay window.** It resamples to 30 s and keeps the 12 h that drill the most new hole with returns to the rig, which skips riserless top hole where a loss alarm would be meaningless. An operator-coded incident pulls the window onto itself only if that stretch is mostly drilling.
+- **Sections.** Boundaries come from where the bit size changes in the depth logs and from the real casing shoes (`wbGeometry`, the most consistent report when there are several). Sections with no casing record are labelled "(typical)". Example, F-14: 26″ → 17½″ with the real 10¾″ string at 1,604 m → 12¼″ to the real 9⅝″ shoe at 2,597 m → 8½″ to the real 7″ liner at 3,695 m.
+- **Tops.** The picks are mapped to North Sea groups; base picks and faulted-out, not-reached and eroded picks are skipped. The replayed well's real tops drive its mud-logger picks and are the truth for the top-picking evaluation.
+
+**Replayed well: 15/9-F-14**, 12–13 May 2008, 17½″ section, drilling 1,549 → 1,841 m. The look-ahead predicts the Rogaland top 870 ± 36 m below the bit at 1,601 m; the real pick is 866 m below. At 1,601 m the detectors raise a critical "lost circulation" alert. The rig's report for that morning describes normal drilling from 1,568 to 1,725 m, with shaker-screen plugging and mud overflowing at the shakers shortly before. So the alert is a **false alarm caused by surface mud handling**, the kind a pit-transfer or shaker flag from the rig would suppress.
 
 - **Licence:** Equinor Open Data Licence. It is based on CC BY 4.0; the data may not be sold.
 - **Required attribution** (shown on Live Ops): *Real-time drilling data from the Volve field, © Equinor and the former Volve licence partners (ExxonMobil Exploration and Production Norway AS, Bayerngas Norge AS), Equinor Open Data Licence.*
 
 Limits:
-- Incidents are the **operator's activity codes** from the daily reports, not hand-checked truth. Their times are to the report's resolution (often 15–30 min). Without the reports there are no scenarios and no alarm-budget score.
-- The Volve wellbore's formation tops are predicted from nearby Sodir wells, not picked. There is no depth-indexed offset gamma ray for DTW picking.
-- StrataSense derives some channels itself: TVD (from the WITSML survey), rig state and d-exponent, plus any channel a log lacks, such as gamma ray. The Live Ops tooltip lists them.
+- **No coded incidents fall inside a drilling window.** The Volve operator codes 39 interruptions across the wellbores, but they happen during trips, fishing or plugging and abandonment (e.g. F-14's two "lost circulation" codes are from August 2016). So the real replays have no V1… scenarios, and the alarm-budget evaluation has nothing to score on them. The F-14 alert above was checked against the report by hand.
+- **3 wellbores are not imported.** 15/9-F-1, F-5 and F-9 have no 12 h stretch with ROP, WOB, SPP, flow and returns recorded together.
+- **Some mud weights are defaults.** Where a Volve log has no mud-weight channel (e.g. F-10, F-15), MW falls back to 9.0 ppg, while ECD is the measured value.
+- **Derived channels.** StrataSense derives TVD (from the WITSML survey), rig state and d-exponent, plus any channel a log lacks. The Live Ops tooltip lists them.
+- **Report reading on real reports is weak.** Scored against the operator's own codes on all 1,759 Volve report-days (23 wells, 160 coded events), extraction agreement is F1 0.07 (precision 0.04, recall 0.23), and adding 20–140 labelled local report-days does not lift it (about 0.05).
+  - This is not a clean zero-shot figure: the evaluated model had been refitted on most of these reports.
+  - Part of the gap is likely the scoring rule, since many coded events carry depth 0 and matching is by depth.
+  - Diagnosing it is the next piece of work before any skill is claimed on real text.
 
 ### Score extraction on Volve DDRs
 

@@ -223,7 +223,7 @@ def correlation_panel(kb: KnowledgeBase, target: Target, radius_km: float, max_w
 
 
 def load_log_decimated(well_id: str, step: int = 5) -> dict | None:
-    p = config.LOGS_DIR / f"{well_id}.npz"
+    p = config.log_path(well_id)
     if not p.exists():
         return None
     z = np.load(p)

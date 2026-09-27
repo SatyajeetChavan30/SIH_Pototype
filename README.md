@@ -4,7 +4,14 @@
 
 StrataSense turns decades of DDRs, WCRs and scanned reports into **cited, structured drilling knowledge**. It then uses that knowledge to warn the rig **before** the bit reaches a problem interval, by projecting offset-well events onto the active well **by formation, not measured depth**.
 
-> ⚠️ **All data in this repository's demo is SYNTHETIC.** It is generated from published Upper-Assam geology (Girujan clay, depleted Tipam sands, Barail coal and thrust-proximal overpressure, fractured Sylhet limestone). Well names are fictitious. A **real public-data mode** (Norwegian North Sea, Sodir FactPages, open licence) is one click away: admins can use the **Synthetic · Assam | Real · North Sea** switch in the header, or **System → Dataset**; where OIL's own data would come from, and how to request real Assam well data from DGH's National Data Repository, is in [`docs/DATA_SOURCES.md`](docs/DATA_SOURCES.md).
+> **Data: real public records by default, a synthetic demo on one switch.** Once built, StrataSense opens on the **Norwegian North Sea**:
+> - **1,024 real wells** from the Norwegian Offshore Directorate (Sodir FactPages, open licence), with their tops, casing, mud and histories.
+> - **7 real Volve wells** from Equinor: drilling logs, casing, formation picks and 636 daily drilling reports.
+> - Live Ops replays **real rig data from well 15/9-F-14**.
+>
+> The **synthetic Upper-Assam demo** is generated from published Assam geology, with fictitious well names and a known truth so metrics can be measured. Admins switch between the two with **Synthetic · Assam | Real · North Sea** in the header.
+>
+> None of this is Oil India's own data, which is confidential. [`docs/DATA_SOURCES.md`](docs/DATA_SOURCES.md) covers what is real, what is estimated, how to get each source, and how to request real Assam well data from DGH's National Data Repository.
 
 ![Live Ops](docs/screenshots/01_live_ops.png)
 
@@ -28,7 +35,9 @@ Full rationale: [`docs/VISION.md`](docs/VISION.md) (end goal, success metrics, s
 Requirements: Python 3.10+ and Node 18+ (Node is used once, to build the dashboard).
 
 1. **Start StrataSense.** Windows: double-click **`start.bat`**. Linux / macOS: run `./run.sh`. The first start installs what StrataSense needs, then opens **http://localhost:8000** in your browser. Keep the window open while you use StrataSense.
-2. **Build the knowledge base in the browser.** On first start the page offers the datasets. Click **Build knowledge base** for the synthetic Upper-Assam demo and watch it generate the wells, read every report (NLP + OCR), train the models and replay the active well (about 2 minutes, or up to about 8 minutes when the OCR engine is installed, because the scanned reports are then scored too). The dashboard opens by itself when it is ready.
+2. **Build the knowledge base in the browser.** On first start the page offers the datasets.
+   - Click **Build knowledge base** for the synthetic Upper-Assam demo. It generates the wells, reads every report (NLP + OCR), trains the models and replays the active well. This takes about 2 minutes, or up to about 8 minutes when the OCR engine is installed, because the scanned reports are then scored too. The dashboard opens by itself when it is ready.
+   - Then, in **System → Dataset**, build the **real North Sea** knowledge base and import the Volve rig data ([how](docs/DATA_SOURCES.md)). From then on StrataSense opens on the real data.
 3. **Sign in** as `field`, `office` or `admin` (password `demo`).
 
 From then on everything is done in the dashboard:
@@ -79,14 +88,14 @@ Live-feed specs (`STRATASENSE_STREAM`): `replay`, `wits0-listen:5501`, `wits0-co
 
 | View | What to show |
 |---|---|
-| **Live Ops** | Replay of the active well NDH-21's eRTMAC stream. "Jump to" S1–S4 scenarios. On the North Sea dataset: the real Equinor Volve rig stream once it has been imported, with scenarios V1, V2… from the operator's drilling reports and the Equinor attribution; without it, a "No real-time stream" panel. Fused alert feed with p-values, look-ahead ribbon, physics-expected lines, alarm budget and digest, evidence drawer with citations and decision log, DTW top-pick QC, shift-handover brief, rig-site view. |
+| **Live Ops** | On the North Sea dataset, 12 h of real rig data from Volve well 15/9-F-14 (17½″ section, 1,549 → 1,841 m), with its real formation picks and the Equinor attribution. **Replay this well** in System switches to another imported Volve well. On the synthetic Assam demo, the replay of NDH-21 with "Jump to" S1–S4 scenarios. Fused alert feed with p-values, look-ahead ribbon, physics-expected lines, alarm budget and digest, evidence drawer with citations and decision log, DTW top-pick QC, shift-handover brief, rig-site view. |
 | **Offset Map** | Wells within a user-defined radius, coloured by dominant hazard. Click anywhere to assess a planned location. |
-| **Correlation** | Offset logs side by side; flatten on a formation top and the Tipam thief sand lines up. |
+| **Correlation** | Offset logs side by side; flatten on a formation top. On the North Sea dataset: the real gamma-ray and drilling logs of the Volve wells. On Assam: the Tipam thief sand lines up. |
 | **Risk & Planning** | Depth × hazard risk with CIs, headline zones, MW window vs plan, **what-if planner** (MW / ECD / casing points), printable Offset Hazard Brief. |
 | **Knowledge** | Search with auto-parsed filters and **CSV export** of every match with its source page, **Browse all** events and lessons, "Ask StrataSense" with numbered citations, knowledge graph (what cured what), **after-action review** on any event. |
 | **Ingestion** | Upload PDF/XML or use a sample; **bulk import** of a folder, many files or a .zip. Sentence-level NLP trace, extracted events, human review queue with history (approved / rejected), **expert memo** capture with peer review. Scans stored before OCR was installed are flagged, with a one-click re-read. |
 | **Analytics** | Model skill vs baselines, extraction F1, NPT Pareto, calibration, what-if value, alarm-budget trade-off (re-run in place), DTW top-pick accuracy, Volve real-data check (upload in place), **Maintenance** (re-score OCR, retrain the risk model and the sentence classifier), decision-log browser and verification. |
-| **System** (admin) | Dataset build / switch (also the **Synthetic · Assam \| Real · North Sea** switch in the header), the Volve real-rig-stream import (scan a folder or upload a .zip, pick the wellbore, import), live rig feed and rig simulator, settings, optional engines, users, restart, background jobs. |
+| **System** (admin) | Dataset build / switch (also the **Synthetic · Assam \| Real · North Sea** switch in the header), the Volve import (logs, drilling reports and formation picks; scan a folder or upload a .zip; import every wellbore; choose which one Live Ops replays), live rig feed and rig simulator, settings, optional engines, users, restart, background jobs. |
 
 The screenshots were taken before the rename to StrataSense (they still show the old name) and before the dataset switch and the Volve import were added.
 
@@ -121,9 +130,9 @@ backend/stratasense/
   realtime/sources.py hub.py simulator.py   WITS-0 TCP / WITSML sources, shared live session, rig simulator
   validate/volve.py       real-data check on the public Equinor Volve reports
   public/sodir.py         real public-data build from Sodir FactPages (North Sea wells, tops, casing, mud, LOT/FIT, histories)
-  public/volve.py         real rig stream from Equinor Volve real-time WITSML (units, 30 s resampling, drilling window, survey TVD, drilling-report incidents → scenarios V1…)
+  public/volve.py         Equinor Volve: real-time logs → Live Ops stream; depth logs → offset logs; wbGeometry → casing sections; well picks → tops; daily drilling reports → documents, events, report-reader training; measured ECD margin
   api/main.py             FastAPI REST + /ws/live WebSocket, serves the UI
-backend/tests/            87 tests (NLP, OCR, geometry, parsers, model claims, live replay, API, sign-in and roles, vision features, live feed, public-data validation, Volve real-time stream import, dashboard operations)
+backend/tests/            92 tests (NLP, OCR, geometry, parsers, model claims, live replay, API, sign-in and roles, vision features, live feed, public-data validation, Volve import (logs, casing, picks, reports), dashboard operations)
 frontend/src/             React + TypeScript views and components
 docs/                     VISION.md, RESEARCH.md, SOLUTION.md, DATA_SOURCES.md, screenshots
 ```
@@ -133,4 +142,4 @@ docs/                     VISION.md, RESEARCH.md, SOLUTION.md, DATA_SOURCES.md, 
 ```bash
 cd backend && ../.venv/Scripts/python -m pytest -q    # Windows; ../.venv/bin/python on Linux / macOS
 ```
-87 tests, about 2.5 minutes. Unit tests always run; system tests run once a knowledge base has been built. Use the project's `.venv` interpreter: a system Python without its packages fails with misleading errors.
+92 tests, about 5½ minutes. Unit tests always run; system tests run once a knowledge base has been built. Use the project's `.venv` interpreter: a system Python without its packages fails with misleading errors.

@@ -35,7 +35,9 @@ TABLES = ("wellbore_exploration_all", "wellbore_formation_top", "wellbore_casing
           "wellbore_history")
 G_CM3_TO_PPG = 8.345
 MAX_INC_DEG = 15.0
-ECD_MARGIN_PPG = 0.3      # ECD is not published; a typical annular-friction margin, flagged in the UI and docs
+ECD_MARGIN_PPG = 0.3      # ECD is not published; a typical annular-friction margin, flagged in the UI and docs.
+                          # Replaced by the ECD - MW measured while drilling in the Volve logs when those are imported
+                          # (public/volve.py calibration.json)
 ATTRIBUTION = ("Contains data under the Norwegian licence for Open Government data (NLOD) distributed by the "
                "Norwegian Offshore Directorate")
 
@@ -200,7 +202,8 @@ def _inch(v) -> str:
     return f'{whole}"'
 
 
-def build_sections(db: DB, casing: list[dict], mud: list[dict], wells: set[str]) -> None:
+def build_sections(db: DB, casing: list[dict], mud: list[dict], wells: set[str],
+                   ecd_margin: float = ECD_MARGIN_PPG) -> None:
     cn = col(casing, "wlbName", "Wellbore")
     ctype, cdia, cdep = col(casing, "wlbCasingType", "Casing type"), col(casing, "wlbCasingDiameter", "Casing diameter [inch]"), \
         col(casing, "wlbCasingDepth", "Casing depth [m]")
@@ -243,7 +246,7 @@ def build_sections(db: DB, casing: list[dict], mud: list[dict], wells: set[str])
             db.insert("sections", {"well_id": wid, "idx": idx, "hole": _inch(r.get(hdia)),
                                    "casing": " ".join(x for x in (_inch(r.get(cdia)).replace("?", ""),
                                                                   (r.get(ctype) or "").strip().lower()) if x),
-                                   "top_md": top, "shoe_md": shoe, "mw_ppg": w, "ecd_ppg": round(w + ECD_MARGIN_PPG, 2)})
+                                   "top_md": top, "shoe_md": shoe, "mw_ppg": w, "ecd_ppg": round(w + ecd_margin, 2)})
             lt = _f(r.get(lot)) if lot else None
             if lt and 0.8 < lt < 2.8:
                 db.insert("lot_tests", {"well_id": wid, "depth_md": _f(r.get(hdep)) or shoe, "casing": _inch(r.get(cdia)),
@@ -254,7 +257,7 @@ def build_sections(db: DB, casing: list[dict], mud: list[dict], wells: set[str])
             w = mw_in(top, td)
             hole = _inch(rows[-1].get(hdia)) if rows else "?"
             db.insert("sections", {"well_id": wid, "idx": idx, "hole": hole, "casing": "open hole", "top_md": top,
-                                   "shoe_md": td, "mw_ppg": w, "ecd_ppg": round(w + ECD_MARGIN_PPG, 2)})
+                                   "shoe_md": td, "mw_ppg": w, "ecd_ppg": round(w + ecd_margin, 2)})
 
 
 def history_pages(rows: list[dict], wells: set[str]) -> list[tuple[str, str]]:
@@ -297,7 +300,12 @@ def build(folder: Path | None = None, quadrants: set[str] | None = None, downloa
     ids = build_master(db, tables, quadrants, log)
     wells = set(ids)
     n_tops = build_tops(db, tables["wellbore_formation_top"], wells)
-    build_sections(db, tables["wellbore_casing_and_lot"], tables["wellbore_mud"], wells)
+    from . import volve
+    margin = volve.ecd_margin(config.DATA_DIR)
+    build_sections(db, tables["wellbore_casing_and_lot"], tables["wellbore_mud"], wells,
+                   margin if margin is not None else ECD_MARGIN_PPG)
+    log(f"  ECD = MW + {margin if margin is not None else ECD_MARGIN_PPG} ppg "
+        f"({'measured while drilling in the Volve logs' if margin is not None else 'assumed'})")
     # wells without any group tops cannot be correlated; keep them on the map but not as offsets
     db.commit()
     log(f"  {n_tops} group tops, sections and LOT/FIT tests loaded")
@@ -309,6 +317,14 @@ def build(folder: Path | None = None, quadrants: set[str] | None = None, downloa
             shutil.copy(src / f, config.MODELS_DIR / f)
     if not (config.MODELS_DIR / "sentence_clf.joblib").exists():
         raise SystemExit("Build the Assam demo first (python -m stratasense.cli build-demo): its sentence classifier is reused.")
+    ddr = config.DATA_DIR / "public" / "volve" / "ddr"
+    if ddr.exists() and any(ddr.glob("*.xml")):
+        # adapt the report reader to real text: synthetic training set + Volve DDR sentences labelled by the operator's
+        # own activity codes; the replayed (active) wellbore's reports are held out
+        from ..validate.volve import adapt_classifier
+        adapted, info = adapt_classifier(ddr, exclude={volve.active_wellbore(config.DATA_DIR)} - {None}, log=log)
+        adapted.save(config.MODELS_DIR / "sentence_clf.joblib")
+        db.kv_set("classifier_source", info)
     clf = SentenceClassifier.load(config.MODELS_DIR / "sentence_clf.joblib")
 
     ing = Ingestor(db, clf)
@@ -329,9 +345,8 @@ def build(folder: Path | None = None, quadrants: set[str] | None = None, downloa
     if latest:
         db.execute("UPDATE wells SET is_active=1 WHERE id=?", (latest["id"],))
         db.kv_set("active_well", latest["id"])
-    from . import volve
-    if volve.artifact(config.DATA_DIR):   # a real Volve rig stream was imported earlier: it becomes the active well
-        volve.apply(db, config.DATA_DIR, log=log)
+    if volve.artifact(config.DATA_DIR):   # real Volve wellbores were imported: wells, logs, reports, the active stream
+        volve.apply(db, config.DATA_DIR, log=log, ingestor=ing)
     db.kv_set("public_source", {"source": "Sodir FactPages", "licence": "NLOD 2.0", "attribution": ATTRIBUTION,
                                 "quadrants": sorted(quadrants) if quadrants else None, "wells": len(ids),
                                 "histories": len(pages), "events": n_ev})

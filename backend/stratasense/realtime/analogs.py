@@ -66,8 +66,8 @@ def _signature(wells: list, logs: dict) -> str:
 
 class AnalogIndex:
     def __init__(self, kb: KnowledgeBase, cache: bool = True):
-        wells = [w for w in kb.offsets() if (config.LOGS_DIR / f"{w.id}.npz").exists()]
-        logs = {w.id: config.LOGS_DIR / f"{w.id}.npz" for w in wells}
+        wells = [w for w in kb.offsets() if config.log_path(w.id).exists()]
+        logs = {w.id: config.log_path(w.id) for w in wells}
         sig = _signature(wells, logs)
         cache_path = config.MODELS_DIR / "analog_index.joblib"
         cached = None

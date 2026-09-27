@@ -8,7 +8,8 @@ import { fmt } from "../theme";
 
 interface Dataset { code: string; label: string; about: string; built: boolean; current: boolean; synthetic: boolean; path: string;
   staged: boolean; needs?: string | null; build_info: any; stream?: boolean;
-  stream_source?: { wellbore: string; incidents?: number; window: { start: string; hours: number; md_from: number; md_to: number } } | null }
+  stream_source?: { wellbore: string; incidents?: number; tops?: string; casing?: string; wells?: string[];
+    window: { start: string; hours: number; md_from: number; md_to: number } } | null; volve_wells?: string[] }
 interface StreamInfo { spec: string; live: boolean; describe: string; in_gap: boolean; samples: number; bit_md: number | null; listen_port: number | null;
   stats: { connected: boolean; peer: string | null; packets: number; errors: number; reconnects: number; last_packet_age_s: number | null; last_error: string | null } | null }
 interface SimInfo { available: boolean; running: boolean; frames: number; total: number; bit_md: number | null; speed: number; target: string | null; error: string | null }
@@ -173,6 +174,9 @@ interface VolveWell { wellbore: string; drilling_logs: number; files: number; lo
 function VolveStream({ d, busy, restart, boot, reload }: { d: Dataset; busy?: Job; restart: (why: string, boot: string) => void; boot: string; reload: () => void }) {
   const [folder, setFolder] = useState("");
   const [ddr, setDdr] = useState("");
+  const [picks, setPicks] = useState("");
+  const [allWells, setAllWells] = useState(true);
+  const [replay, setReplay] = useState("");
   const [hours, setHours] = useState(12);
   const [wells, setWells] = useState<VolveWell[] | null>(null);
   const [wellbore, setWellbore] = useState("");
@@ -196,13 +200,23 @@ function VolveStream({ d, busy, restart, boot, reload }: { d: Dataset; busy?: Jo
   };
   const run = async () => {
     setMsg(null);
-    try { setImportId((await startJob("/api/admin/volve/import", { ...body(), wellbore: wellbore || undefined, hours })).id); reload(); }
+    try { setImportId((await startJob("/api/admin/volve/import", { ...body(), picks: picks.trim() || undefined, all: allWells,
+      wellbore: wellbore || undefined, hours })).id); reload(); }
     catch (e: any) { setMsg({ ok: false, text: e.message }); }
   };
   const onImported = (j: Job) => {
     reload();
     if (j.status === "done" && j.result?.restart) restart("Loading the Volve rig stream…", boot);
     else if (j.status === "done") setMsg({ ok: true, text: "Imported. It is used when the North Sea dataset is switched on." });
+  };
+  const activate = async () => {
+    const wid = replay || d.volve_wells?.[0];
+    if (!wid || !confirm(`Replay ${wid} in Live Ops? ${d.current ? "The server restarts (about 10–30 s)." : ""}`)) return;
+    setMsg(null);
+    try {
+      const r = await api<{ restart: boolean }>("/api/admin/volve/activate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ wellbore: wid }) });
+      if (r.restart) restart(`Loading ${wid}…`, boot); else { setMsg({ ok: true, text: `${wid} will be replayed when the North Sea dataset is in use.` }); reload(); }
+    } catch (e: any) { setMsg({ ok: false, text: e.message }); }
   };
   const upload = async (f: File | undefined, set: (p: string) => void) => {
     if (!f) return;
@@ -216,7 +230,8 @@ function VolveStream({ d, busy, restart, boot, reload }: { d: Dataset; busy?: Jo
   return <div className="col" style={{ gap: 6, marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--line)" }}>
     <div style={{ fontWeight: 650 }}>Real rig stream for Live Ops: Equinor Volve</div>
     <div className="small ink2">{src ? <>In use: <b>{src.wellbore}</b>, {src.window.start.slice(0, 16).replace("T", " ")} UTC, {src.window.hours} h, bit {Math.round(src.window.md_from)}–{Math.round(src.window.md_to)} m MD
-      {src.incidents ? ` · ${src.incidents} real incident${src.incidents > 1 ? "s" : ""} from the drilling reports` : " · no coded incidents"}</>
+      {src.incidents ? ` · ${src.incidents} real incident${src.incidents > 1 ? "s" : ""} from the drilling reports` : " · no coded incidents"}
+      {src.tops ? ` · tops: ${src.tops}` : ""}{src.wells && src.wells.length > 1 ? ` · ${src.wells.length} Volve wellbores imported (the others are offsets)` : ""}</>
       : "None yet: Live Ops has no stream in this dataset."}</div>
     <div className="small muted">Download from <a href="https://www.equinor.com/energy/volve-data-sharing" target="_blank" rel="noreferrer">Equinor's Volve data sharing</a> (Databricks Marketplace, free account):
       the <b>WITSML Realtime drilling data</b> folder, and for real incidents the daily drilling reports (XML) from <b>Well_technical_data</b>. Equinor Open Data Licence: attribution required, no sale of the data.</div>
@@ -226,6 +241,10 @@ function VolveStream({ d, busy, restart, boot, reload }: { d: Dataset; busy?: Jo
     <label className="small col" style={{ gap: 2 }}>Daily drilling reports folder (optional, for real incidents)
       <input type="text" value={ddr} onChange={(e) => setDdr(e.target.value)} placeholder="D:\Volve\Well_technical_data" /></label>
     <label className="small">or upload a .zip of the reports <input type="file" accept=".zip" disabled={uploading} onChange={(e) => upload(e.target.files?.[0], setDdr)} /></label>
+    <label className="small col" style={{ gap: 2 }}>Formation picks file (optional: Geophysical_Interpretations/Wells/Well_picks_Volve_v1.dat)
+      <input type="text" value={picks} onChange={(e) => setPicks(e.target.value)} placeholder="D:\Volve\picks\Well_picks_Volve_v1.dat" /></label>
+    <label className="small row" style={{ gap: 4 }}><input type="checkbox" checked={allWells} onChange={(e) => setAllWells(e.target.checked)} />
+      import every usable wellbore (the others become offset wells with real logs, casing and picked tops)</label>
     {uploading && <div className="small muted">Uploading and unpacking…</div>}
     <div className="row wrap small" style={{ gap: 8 }}>
       <button className="btn sm" disabled={!folder.trim() || !!busy} onClick={scan}>Scan folder</button>
@@ -237,6 +256,13 @@ function VolveStream({ d, busy, restart, boot, reload }: { d: Dataset; busy?: Jo
         {[6, 12, 24].map((h) => <option key={h} value={h}>{h} h</option>)}</select></label>
       <button className="btn sm primary" disabled={!folder.trim() || !!busy} onClick={run}>Import Volve stream</button>
     </div>
+    {(d.volve_wells?.length ?? 0) > 1 && <div className="row wrap small" style={{ gap: 8 }}>
+      <label className="row" style={{ gap: 4 }}>Replay this well
+        <select value={replay || src?.wellbore || ""} onChange={(e) => setReplay(e.target.value)}>
+          {d.volve_wells!.map((w) => <option key={w} value={w}>{w}{w === src?.wellbore ? " (in use)" : ""}</option>)}
+        </select></label>
+      <button className="btn sm" disabled={!!busy || !replay || replay === src?.wellbore} onClick={activate}>Replay it</button>
+    </div>}
     {scanId && <Tracked id={scanId} onEnd={onScanned} />}
     {importId && <Tracked id={importId} onEnd={onImported} />}
     <Msg m={msg} />

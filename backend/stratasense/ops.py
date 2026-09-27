@@ -86,6 +86,14 @@ def _read_kv(db_path: Path, key: str):
         return None
 
 
+def _volve_imported(folder: Path) -> list[dict]:
+    try:
+        from .public import volve
+        return volve.imported(folder)
+    except Exception:  # noqa: BLE001 - a status page must not fail on a half-written artifact
+        return []
+
+
 def dataset_status() -> dict:
     out = {}
     for code, d in DATASETS.items():
@@ -96,6 +104,7 @@ def dataset_status() -> dict:
         out[code] = {**d, "code": code, "built": built, "current": code == config.REGION, "path": str(final),
                      "stream": (final / "logs" / "active_stream.npz").exists(),
                      "stream_source": _read_kv(final / config.DB_NAME, "stream_source") if built else None,
+                     "volve_wells": [w["id"] for w in _volve_imported(final)],
                      "staged": (staging_of(final) / BUILD_OK).exists(), "build_info": info}
     out["norway"]["needs"] = None if (config.data_dir_for("assam") / "models" / "sentence_clf.joblib").exists() else \
         "Build the synthetic Assam demo first: its report-reading model is reused for the North Sea histories."
@@ -159,7 +168,7 @@ VOLVE_STAGES = [
 
 
 def import_volve(job: Job, folder: str, ddr_folder: str | None = None, wellbore: str | None = None,
-                 hours: float = 12.0) -> dict:
+                 hours: float = 12.0, all_wells: bool = False, picks: str | None = None) -> dict:
     """Run `import-volve-stream` for the North Sea dataset in a helper process (the XML can run to gigabytes)."""
     if not dataset_status()["norway"]["built"]:
         raise RuntimeError("Build the North Sea knowledge base first: the Volve stream is added to it.")
@@ -169,6 +178,10 @@ def import_volve(job: Job, folder: str, ddr_folder: str | None = None, wellbore:
         args += ["--ddr", ddr_folder]
     if wellbore:
         args += ["--wellbore", wellbore]
+    if all_wells:
+        args += ["--all"]
+    if picks:
+        args += ["--picks", picks]
     job.progress, job.stage = 0.0, "Starting"
 
     def on_line(line: str):

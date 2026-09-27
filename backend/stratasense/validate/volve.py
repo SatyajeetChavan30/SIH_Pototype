@@ -163,6 +163,31 @@ def evaluate_volve(folder: Path | str, limit: int | None = None, k_steps: tuple[
                         "Depth comes from the activity depth field; hazard and actions must come from the text."]}
 
 
+def adapt_classifier(folder: Path | str, exclude: set[str] | None = None, log=print):
+    """The sentence classifier refitted on real report text: the synthetic training set plus every Volve DDR sentence
+    labelled by the operator's own activity code (labelled_sentences), except the reports of wellbores in `exclude`
+    (the replayed well, so its incidents are not in the training data). Returns (classifier, summary)."""
+    from ..public.volve import wellbore_name
+    exclude = {e for e in (exclude or set()) if e}
+    reports, held = [], 0
+    for w, rs in load_reports(folder).items():
+        for r in rs:
+            if (wellbore_name(r.get("wellbore") or "") or wellbore_name(w)) in exclude:
+                held += 1
+            else:
+                reports.append(r)
+    local = labelled_sentences(reports)
+    synth = training_sentences()
+    clf = SentenceClassifier().fit([s["text"] for s in synth] + [s["text"] for s in local],
+                                   [s["label"] for s in synth] + [s["label"] for s in local])
+    info = {"synthetic_sentences": len(synth), "volve_sentences": len(local), "volve_reports": len(reports),
+            "held_out_reports": held, "held_out_wells": sorted(exclude),
+            "labels": dict(Counter(s["label"] for s in local))}
+    log(f"  report reader adapted on {len(local)} real Volve sentences ({len(reports)} report-days; "
+        f"{held} held out) + {len(synth)} synthetic")
+    return clf, info
+
+
 def run_and_store(db, folder: Path | str, limit: int | None = None, log=print) -> dict:
     res = evaluate_volve(folder, limit, log=log)
     db.kv_set("public_eval", res)

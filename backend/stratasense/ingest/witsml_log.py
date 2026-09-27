@@ -19,7 +19,7 @@ from html import escape
 # The Volve (Equinor) aliases follow the curve lists of its WITSML 1.4.1.1 real-time export.
 DEFAULT_MNEMONICS = {
     "TIME": "time", "DATETIME": "time",
-    "DMEA": "hole_depth", "DEPT": "hole_depth",
+    "DMEA": "hole_depth", "DEPT": "hole_depth", "DEPTH": "hole_depth",
     "DBTM": "md", "BITDEP": "md", "BDEP": "md", "DBTV": "tvd",
     "ROPA": "rop", "ROP": "rop",
     "HKLA": "hookload", "HKLD": "hookload",
@@ -34,6 +34,7 @@ DEFAULT_MNEMONICS = {
     "ECDT": "ecd", "ECD": "ecd", "ECD_MWD": "ecd", "ECD_ARC_RT": "ecd", "ECD_ECO_RT": "ecd",
     "GASA": "gas", "TGAS": "gas",
     "GRA": "gr", "GR": "gr", "GRM1": "gr", "ARC_GR_RT": "gr", "GRMA_ECO_RT": "gr",
+    "DXC": "dxc",
 }
 FT_TO_M = 0.3048
 NULL_VALUES = (-999.25, -9999.0)   # WITSML's customary absent-value markers, used when a log declares none
